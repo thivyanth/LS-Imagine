@@ -95,12 +95,21 @@ class Logger:
         self._images = {}
         self._videos = {}
         self.step = step
+        self._start_time = time.time()
+        self._total_steps = config.steps
+        self._initial_step = step
 
         if self._wandb:
             if config.wandb_key is None:
                 raise ValueError("wandb_key is None")
             wandb.login(key=config.wandb_key)
-            wandb.init(project="LS-Imgine", dir=str(logdir), config = config.__dict__, name = str(logdir), save_code=True)
+            wandb.init(project="LS-Imagine",
+                       dir=str(logdir),
+                       config = config.__dict__,
+                       name = str(logdir),
+                       save_code=True,
+                       tags=["LS-Imagine"],
+                       entity="agents-world-model-research")
             wandb.config.update({"initial_step": step})
 
         else:
@@ -121,6 +130,26 @@ class Logger:
         scalars = list(self._scalars.items())
         if fps:
             scalars.append(("fps", self._compute_fps(step)))
+        
+        # Calculate time estimates
+        current_runtime = time.time() - self._start_time
+        completed_steps = step - self._initial_step
+        
+        if completed_steps > 0 and self._total_steps > 0:
+            # Calculate steps per second
+            steps_per_second = completed_steps / current_runtime if current_runtime > 0 else 0
+            
+            if steps_per_second > 0:
+                # Total estimated time for entire training
+                total_estimated_time_hours = self._total_steps / steps_per_second / 3600
+                
+                # Estimated remaining time
+                remaining_steps = self._total_steps - step
+                estimated_remaining_time_hours = remaining_steps / steps_per_second / 3600 if remaining_steps > 0 else 0
+                
+                scalars.append(("time/total_estimated_hours", total_estimated_time_hours))
+                scalars.append(("time/estimated_remaining_hours", estimated_remaining_time_hours))
+        
         print(f"[{step}]", " / ".join(f"{k} {v:.1f}" for k, v in scalars))
         with (self._logdir / "metrics.jsonl").open("a") as f:
             f.write(json.dumps({"step": step, **dict(scalars)}) + "\n")
@@ -226,6 +255,10 @@ def simulate(
     state=None,
     is_training=False,
 ):
+    # Track success rate over recent training episodes (window of 100)
+    if not hasattr(simulate, 'train_success_history'):
+        simulate.train_success_history = []
+    
     # initialize or unpack simulation state
     if state is None:
         step, episode = 0, 0
@@ -347,12 +380,21 @@ def simulate(
                         cache[envs[i].id].pop(key)
 
                 if not is_eval:
+                    # Track success history for running success rate (keep last 100 episodes)
+                    simulate.train_success_history.append(suc)
+                    if len(simulate.train_success_history) > 100:
+                        simulate.train_success_history.pop(0)
+                    
+                    # Compute running success rate
+                    train_success_rate = sum(simulate.train_success_history) / len(simulate.train_success_history)
+                    
                     step_in_dataset = erase_over_episodes(cache, limit)
                     logger.scalar(f"dataset_size", step_in_dataset)
                     logger.scalar(f"train_return", score)
                     logger.scalar(f"train_length", length)
                     logger.scalar(f"train_episodes", len(cache))
                     logger.scalar(f"train_success", suc)
+                    logger.scalar(f"train_success_rate", train_success_rate)
                     logger.scalar(f"train_first_success_step", first_success_step)
                     logger.write(step=logger.step)
                 else:

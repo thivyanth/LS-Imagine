@@ -38,8 +38,18 @@ weights/*
 # Ignore all files with the .log extension
 *.log
 
-# Ignore all files with the .sh extension
-# *.sh
+# Environment files
+.env
+
+# Large external libraries (install via setup_conda.sh)
+external/libs/
+
+# Ignore tarballs only in root
+/*.tar.gz
+
+# macOS junk
+.DS_Store
 
 # Ignore DynDream_exprs.sh
 DynDream_exprs.sh
+checkpoints

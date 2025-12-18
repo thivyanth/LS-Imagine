@@ -81,6 +81,7 @@ LS-Imagine is implemented and tested on Ubuntu 20.04 with python==3.9:
     ```bash
     conda create -n ls_imagine python=3.9
     conda activate ls_imagine 
+    pip install torch==2.1.1 torchvision==0.16.1 --index-url https://download.pytorch.org/whl/cu121
     ```
 
 2. Install Java: JDK `1.8.0_171`. Then install the [MineDojo](https://github.com/MineDojo/MineDojo) environment and [MineCLIP](https://github.com/MineDojo/MineCLIP) following their official documents. During the installation of MineDojo, various errors may occur.

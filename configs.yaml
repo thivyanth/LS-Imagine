@@ -1,7 +1,7 @@
 defaults:
 
-  use_wandb: False
-  wandb_key: None
+  use_wandb: True
+  wandb_key: 05ce4790ac0a7095c30a3db2c4702f98a95bf10d
   logdir: null
   traindir: null
   evaldir: null
