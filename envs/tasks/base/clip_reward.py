@@ -29,13 +29,66 @@ class ClipReward(ABC):
         raise NotImplementedError()
 
     def _load_mineclip(self, ckpt, config):
+        import os
+        
+        # Auto-download checkpoint if not found
+        if not os.path.exists(ckpt):
+            print(f"⚠ MineCLIP checkpoint not found: {ckpt}")
+            print(f"  Downloading from Google Drive...")
+            self._download_checkpoint(ckpt)
+        
         config = OmegaConf.create(config)
         self.model = MineCLIP(**config).to(self.device)
-        self.model.load_ckpt(ckpt, strict=True)
+        
+        if os.path.exists(ckpt):
+            self.model.load_ckpt(ckpt, strict=True)
+            print(f"✓ MineCLIP weights loaded from {ckpt}")
+        else:
+            print(f"✗ Download failed! Model will use random weights.")
+            
         if self.resolution != (160, 256):  # Not ideal, but we need to resize the relative position embedding
             self.model.clip_model.vision_model._resolution = th.tensor([160, 256])  # This isn't updated from when mineclip resized it
             self.model.clip_model.vision_model.resize_pos_embed(self.resolution)
         self.model.eval()
+    
+    def _download_checkpoint(self, checkpoint_path):
+        """Automatically download MineCLIP checkpoint from Google Drive using gdown."""
+        try:
+            import subprocess
+            import sys
+            import os
+            
+            # Ensure gdown is installed
+            try:
+                import gdown
+            except ImportError:
+                print("  Installing gdown...")
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "gdown"])
+                import gdown
+            
+            # Create weights directory if it doesn't exist
+            weights_dir = os.path.dirname(checkpoint_path)
+            if weights_dir:
+                os.makedirs(weights_dir, exist_ok=True)
+                print(f"  Created directory: {weights_dir}")
+            
+            # Download from Google Drive
+            file_id = "1uaZM1ZLBz2dZWcn85rZmjP7LV6Sg5PZW"
+            url = f"https://drive.google.com/uc?id={file_id}"
+            
+            print(f"  Downloading MineCLIP checkpoint (~92MB)...")
+            gdown.download(url, checkpoint_path, quiet=False)
+            
+            if os.path.exists(checkpoint_path):
+                file_size_mb = os.path.getsize(checkpoint_path) / (1024 * 1024)
+                print(f"✓ Download complete! Saved to {checkpoint_path} ({file_size_mb:.1f} MB)")
+            else:
+                print(f"✗ Download failed - file not found at {checkpoint_path}")
+                
+        except Exception as e:
+            print(f"✗ Failed to download checkpoint: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _get_reward_from_logits(
         self,

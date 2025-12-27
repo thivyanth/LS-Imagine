@@ -20,6 +20,14 @@ from bisect import insort
 
 to_np = lambda x: x.detach().cpu().numpy()
 
+# LS-Imagine specific fields that should be excluded in baseline mode
+LS_FIELDS = {
+    'heatmap', 'jump', 'is_zoomed', 'zoomed_image', 
+    'heatmap_on_zoomed', 'jumping_steps', 'accumulated_reward',
+    'intrinsic', 'intrinsic_on_zoomed', 'score', 'score_on_zoomed',
+    'reward_on_zoomed', 'is_calculated'
+}
+
 class ScoreStorage:
     def __init__(self, max_steps=1000):
         self.data = defaultdict(list)
@@ -254,6 +262,7 @@ def simulate(
     episodes=0,
     state=None,
     is_training=False,
+    baseline_mode=False,
 ):
     # Track success rate over recent training episodes (window of 100)
     if not hasattr(simulate, 'train_success_history'):
@@ -286,7 +295,7 @@ def simulate(
                 t["reward"] = 0.0
                 t["discount"] = 1.0
                 # initial state should be added to cache
-                add_to_cache(cache, envs[index].id, t)
+                add_to_cache(cache, envs[index].id, t, baseline_mode=baseline_mode)
 
                 current_step = 0
                 if t["is_zoomed"] == True:
@@ -321,6 +330,19 @@ def simulate(
         length += 1
         step += len(envs)
         length *= 1 - done
+        
+        # Baseline mode: log reward decomposition for validation
+        if baseline_mode and not is_eval and episode <= 10:
+            for i, (r, inf) in enumerate(zip(reward, information)):
+                # In baseline mode, reward should be: r = r_env + r_MineCLIP
+                # r_env comes from RewardWrapper (success events)
+                # r_MineCLIP comes from ClipWrapper (stored in info['clip_score'])
+                if done[i]:  # Log at episode end for first 10 episodes
+                    clip_reward = inf.get('clip_score', 0.0)
+                    print(f"[Baseline Reward Check] Episode {episode}, Env {i}:")
+                    print(f"  Total reward: {r}")
+                    print(f"  MineCLIP component: {clip_reward}")
+                    print(f"  Implied env reward: {r - clip_reward}")
 
         # add to cache
         for tmp_index in range(len(results)):
@@ -337,7 +359,7 @@ def simulate(
             transition["discount"] = info.get("discount", np.array(1 - float(d)))
             transition["success"] = info.get("success", False)
             transition["first_success_step"] = info.get("first_success_step", max_steps)
-            add_to_cache(cache, env.id, transition)
+            add_to_cache(cache, env.id, transition, baseline_mode=baseline_mode)
 
             length = len(cache[env.id]["reward"]) 
             current_step = length - 1
@@ -436,13 +458,19 @@ def simulate(
     return (step - steps, episode - episodes, done, length, obs, agent_state, reward, information)
 
 
-def add_to_cache(cache, id, transition):
+def add_to_cache(cache, id, transition, baseline_mode=False):
     if id not in cache:
         cache[id] = dict()
         for key, val in transition.items():
+            # GATE: Skip LS fields in baseline mode
+            if baseline_mode and key in LS_FIELDS:
+                continue
             cache[id][key] = [convert(val)]
     else:
         for key, val in transition.items():
+            # GATE: Skip LS fields in baseline mode
+            if baseline_mode and key in LS_FIELDS:
+                continue
             if key not in cache[id]:
                 # fill missing data(action, etc.) at second time
                 cache[id][key] = [convert(0 * val)]

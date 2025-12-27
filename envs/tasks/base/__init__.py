@@ -7,3 +7,4 @@ from envs.tasks.base.screenshot_wrapper import ScreenshotWrapper
 from envs.tasks.base.concentration_wrapper import ConcentrationWrapper
 from envs.tasks.base.concentration_reward import ConcentrationReward
 from envs.tasks.base.ls_imagine_wrapper import LSImagineWrapper
+from envs.tasks.base.baseline_obs_wrapper import BaselineObsWrapper

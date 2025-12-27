@@ -104,60 +104,68 @@ class WorldModel(nn.Module):
             name="End",
         )
 
-        self.heads["jump"] = networks.MLP(
-            feat_size,
-            (),
-            config.jump_head["layers"],
-            config.units,
-            config.act,
-            config.norm,
-            dist="binary",
-            outscale=config.jump_head["outscale"],
-            device=config.device,
-            name="Jump",
-        )
+        # GATE: Only create LS heads if not in baseline mode
+        if not getattr(config, 'baseline_mode', False):
+            self.heads["jump"] = networks.MLP(
+                feat_size,
+                (),
+                config.jump_head["layers"],
+                config.units,
+                config.act,
+                config.norm,
+                dist="binary",
+                outscale=config.jump_head["outscale"],
+                device=config.device,
+                name="Jump",
+            )
 
-        self.heads["intrinsic"] = networks.MLP(
-            feat_size,
-            (255,) if config.intrinsic_head["dist"] == "symlog_disc" else (),
-            config.intrinsic_head["layers"],
-            config.units,
-            config.act,
-            config.norm,
-            dist=config.intrinsic_head["dist"],
-            outscale=config.intrinsic_head["outscale"],
-            device=config.device,
-            name="Intrinsic",
-        )
+            self.heads["intrinsic"] = networks.MLP(
+                feat_size,
+                (255,) if config.intrinsic_head["dist"] == "symlog_disc" else (),
+                config.intrinsic_head["layers"],
+                config.units,
+                config.act,
+                config.norm,
+                dist=config.intrinsic_head["dist"],
+                outscale=config.intrinsic_head["outscale"],
+                device=config.device,
+                name="Intrinsic",
+            )
 
-        self.heads["jumping_steps"] = networks.MLP(
-            feat_size * 2,
-            (255,) if config.jumping_steps_head["dist"] == "symlog_disc" else (),
-            config.jumping_steps_head["layers"],
-            config.units,
-            config.act,
-            config.norm,
-            dist=config.jumping_steps_head["dist"],
-            outscale=config.jumping_steps_head["outscale"],
-            device=config.device,
-            name="jumping_steps",
-        )
+            self.heads["jumping_steps"] = networks.MLP(
+                feat_size * 2,
+                (255,) if config.jumping_steps_head["dist"] == "symlog_disc" else (),
+                config.jumping_steps_head["layers"],
+                config.units,
+                config.act,
+                config.norm,
+                dist=config.jumping_steps_head["dist"],
+                outscale=config.jumping_steps_head["outscale"],
+                device=config.device,
+                name="jumping_steps",
+            )
 
-        self.heads["accumulated_reward"] = networks.MLP(
-            feat_size * 2,
-            (255,) if config.accumulated_reward_head["dist"] == "symlog_disc" else (),
-            config.accumulated_reward_head["layers"],
-            config.units,
-            config.act,
-            config.norm,
-            dist=config.accumulated_reward_head["dist"],
-            outscale=config.accumulated_reward_head["outscale"],
-            device=config.device,
-            name="accumulated_reward",
-        )
+            self.heads["accumulated_reward"] = networks.MLP(
+                feat_size * 2,
+                (255,) if config.accumulated_reward_head["dist"] == "symlog_disc" else (),
+                config.accumulated_reward_head["layers"],
+                config.units,
+                config.act,
+                config.norm,
+                dist=config.accumulated_reward_head["dist"],
+                outscale=config.accumulated_reward_head["outscale"],
+                device=config.device,
+                name="accumulated_reward",
+            )
        
+        # Validate grad_heads only for heads that exist
         for name in config.grad_heads:
-            assert name in self.heads, name
+            if name in self.heads:
+                continue
+            elif getattr(config, 'baseline_mode', False) and name in ['jump', 'intrinsic', 'jumping_steps', 'accumulated_reward']:
+                continue  # Skip LS heads in baseline mode
+            else:
+                assert False, f"grad_head {name} not in heads"
 
         self._model_opt = tools.Optimizer(
             "model",
@@ -178,14 +186,104 @@ class WorldModel(nn.Module):
         self._scales = dict(
             reward=config.reward_head["loss_scale"],
             end=config.end_head["loss_scale"],
-            jump=config.jump_head["loss_scale"],
-            intrinsic=config.intrinsic_head["loss_scale"],
-            jumping_steps=config.jumping_steps_head["loss_scale"],
-            accumulated_reward=config.accumulated_reward_head["loss_scale"],
         )
+        
+        # GATE: Only add LS head scales if not in baseline mode
+        if not getattr(config, 'baseline_mode', False):
+            self._scales.update(dict(
+                jump=config.jump_head["loss_scale"],
+                intrinsic=config.intrinsic_head["loss_scale"],
+                jumping_steps=config.jumping_steps_head["loss_scale"],
+                accumulated_reward=config.accumulated_reward_head["loss_scale"],
+            ))
 
     def _train(self, data_origin):
+        """Dispatch to baseline or LS-Imagine training based on config"""
+        if getattr(self._config, 'baseline_mode', False):
+            return self._train_baseline(data_origin)
+        else:
+            return self._train_ls_imagine(data_origin)
+    
+    def _train_baseline(self, data_origin):
+        """Pure DreamerV3 training: decoder + reward + end prediction only"""
+        data = self.preprocess(data_origin, zoomed=False)
         
+        with tools.RequiresGrad(self):
+            with torch.cuda.amp.autocast(self._use_amp):
+                embed = self.encoder(data)
+                post, prior = self.dynamics.observe(
+                    embed, data["action"], data["is_first"]
+                )
+                
+                kl_free = self._config.kl_free
+                dyn_scale = self._config.dyn_scale
+                rep_scale = self._config.rep_scale
+                
+                kl_loss, kl_value, dyn_loss, rep_loss = self.dynamics.kl_loss(
+                    post, prior, kl_free, dyn_scale, rep_scale
+                )
+                
+                assert kl_loss.shape == embed.shape[:2], kl_loss.shape
+                
+                # Only standard DreamerV3 heads: decoder, reward, end
+                preds = {}
+                losses = {}
+                feat = self.dynamics.get_feat(post)
+                
+                for name in ['decoder', 'reward', 'end']:
+                    grad_head = name in self._config.grad_heads
+                    feat_input = feat if grad_head else feat.detach()
+                    pred = self.heads[name](feat_input)
+                    
+                    if type(pred) is dict:
+                        for k, v in pred.items():
+                            preds[k] = v
+                            loss = -v.log_prob(data[k])
+                            assert loss.shape == embed.shape[:2], (k, loss.shape)
+                            losses[k] = loss
+                    else:
+                        preds[name] = pred
+                        loss = -pred.log_prob(data[name])
+                        assert loss.shape == embed.shape[:2], (name, loss.shape)
+                        losses[name] = loss
+                
+                scaled = {
+                    key: value * self._scales.get(key, 1.0)
+                    for key, value in losses.items()
+                }
+                
+                model_loss = sum(scaled.values()) + kl_loss
+        
+            metrics = self._model_opt(torch.mean(model_loss), self.parameters())
+        
+        metrics.update({f"{name}_loss": to_np(torch.mean(loss)) for name, loss in losses.items()})
+        metrics["kl_free"] = kl_free
+        metrics["dyn_scale"] = dyn_scale
+        metrics["rep_scale"] = rep_scale
+        metrics["dyn_loss"] = to_np(torch.mean(dyn_loss))
+        metrics["rep_loss"] = to_np(torch.mean(rep_loss))
+        metrics["kl"] = to_np(torch.mean(kl_value))
+        metrics["model_loss"] = to_np(torch.mean(model_loss))
+        
+        with torch.cuda.amp.autocast(self._use_amp):
+            metrics["prior_ent"] = to_np(
+                torch.mean(self.dynamics.get_dist(prior).entropy())
+            )
+            metrics["post_ent"] = to_np(
+                torch.mean(self.dynamics.get_dist(post).entropy())
+            )
+            context = dict(
+                embed=embed,
+                feat=self.dynamics.get_feat(post),
+                kl=kl_value,
+                postent=self.dynamics.get_dist(post).entropy(),
+            )
+        
+        post = {k: v.detach() for k, v in post.items()}
+        return post, None, context, metrics
+    
+    def _train_ls_imagine(self, data_origin):
+        """Original LS-Imagine training with zoomed branch"""
         data = self.preprocess(data_origin, zoomed=False)
         data_zoomed = self.preprocess(data_origin, zoomed=True)
 
@@ -548,7 +646,110 @@ class ImagBehavior(nn.Module):
         jump_indicator,
         is_end,
     ):
-
+        """Dispatch to baseline or LS-Imagine behavior learning based on config"""
+        if getattr(self._config, 'baseline_mode', False):
+            return self._train_baseline(start, objective, is_end)
+        else:
+            return self._train_ls_imagine(
+                start, start_zoomed, objective, intrinsic_objective,
+                jumping_steps_predictor, accumulated_reward_predictor,
+                jump_indicator, is_end
+            )
+    
+    def _train_baseline(self, start, objective, is_end):
+        """Pure DreamerV3 imagination: no jumps, standard lambda returns"""
+        self._update_slow_target()
+        metrics = {}
+        
+        with tools.RequiresGrad(self.actor):
+            with torch.cuda.amp.autocast(self._use_amp):
+                flatten = lambda x: x.reshape([-1] + list(x.shape[2:]))
+                start = {k: flatten(v) for k, v in start.items()}
+                
+                # Standard imagination only (no _jumpy)
+                imag_feat, imag_state, imag_action = self._imagine(
+                    start, self.actor, self._config.imag_horizon
+                )
+                
+                # Predicted rewards (no intrinsic addition)
+                reward = objective(imag_feat, imag_state, imag_action)
+                
+                # Standard lambda returns (no jumping_steps, no accumulated_reward)
+                discount = self._config.discount * torch.ones_like(reward)
+                value = self.value(imag_feat).mode()
+                
+                # Use standard lambda_return (NOT lambda_return_for_ls_imagine)
+                target = tools.lambda_return(
+                    reward[1:], 
+                    value[:-1], 
+                    discount[:-1],
+                    bootstrap=value[-1], 
+                    lambda_=self._config.discount_lambda, 
+                    axis=0
+                )
+                
+                weights = torch.cumprod(
+                    torch.cat([torch.ones_like(discount[:1]), discount[:-1]], 0), 0
+                ).detach()
+                
+                # Actor loss (no jump masking - optimize on ALL steps)
+                actor_target = target - value[:-1].detach()
+                if self._config.reward_EMA:
+                    offset, scale = self.reward_ema(target, self.ema_vals)
+                    normed_target = (target - offset) / scale
+                    normed_base = (value[:-1] - offset) / scale
+                    actor_target = normed_target - normed_base
+                    metrics.update(tools.tensorstats(normed_target, "normed_target"))
+                    metrics["EMA_005"] = to_np(self.ema_vals[0])
+                    metrics["EMA_095"] = to_np(self.ema_vals[1])
+                
+                actor_loss = -weights[:-1] * actor_target
+                actor_ent = self.actor(imag_feat).entropy()
+                actor_loss -= self._config.actor["entropy"] * actor_ent[:-1, ..., None]
+                actor_loss = torch.mean(actor_loss)
+        
+        # Value update
+        with tools.RequiresGrad(self.value):
+            with torch.cuda.amp.autocast(self._use_amp):
+                value = self.value(imag_feat[:-1].detach())
+                value_loss = -value.log_prob(target.detach())
+                if self._config.critic["slow_target"]:
+                    slow_target = self._slow_value(imag_feat[:-1].detach())
+                    value_loss -= value.log_prob(slow_target.mode().detach())
+                value_loss = torch.mean(weights[:-1] * value_loss[:, :, None])
+        
+        metrics.update(tools.tensorstats(value.mode(), "value"))
+        metrics.update(tools.tensorstats(target, "target"))
+        metrics.update(tools.tensorstats(reward, "imag_reward"))
+        
+        if self._config.actor["dist"] in ["onehot"]:
+            metrics.update(
+                tools.tensorstats(
+                    torch.argmax(imag_action, dim=-1).float(), "imag_action"
+                )
+            )
+        else:
+            metrics.update(tools.tensorstats(imag_action, "imag_action"))
+        metrics["actor_entropy"] = to_np(torch.mean(actor_ent))
+        
+        with tools.RequiresGrad(self):
+            metrics.update(self._actor_opt(actor_loss, self.actor.parameters()))
+            metrics.update(self._value_opt(value_loss, self.value.parameters()))
+        
+        return imag_feat, imag_state, imag_action, weights, metrics
+    
+    def _train_ls_imagine(
+        self,
+        start,
+        start_zoomed,
+        objective,
+        intrinsic_objective,
+        jumping_steps_predictor,
+        accumulated_reward_predictor,
+        jump_indicator,
+        is_end,
+    ):
+        """Original LS-Imagine training with jumpy imagination"""
         self._update_slow_target()
         metrics = {}
 

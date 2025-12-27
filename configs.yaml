@@ -74,6 +74,7 @@ defaults:
   weight_decay: 0.0
   unimix_ratio: 0.01
   initial: 'learned'
+  baseline_mode: False  # Default to False (LS-Imagine mode)
 
   # Training
   batch_size: 16
@@ -149,6 +150,16 @@ minedojo:
   imag_gradient: 'reinforce'
   break_speed: 100.0
   time_limit: 36000
+
+ls_imagine:
+  baseline_mode: False
+  jump_prob: 0.7
+  long_term_branch_weight: 1.0
+
+dreamer_baseline:
+  baseline_mode: True
+  jump_prob: 0.0
+  long_term_branch_weight: 0.0
 
 debug:
   debug: True

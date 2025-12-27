@@ -46,6 +46,7 @@ def _get_minedojo_specs(task_id, task_specs, sim_specs):
 def _add_wrappers(
     env: MetaTaskBase, 
     task_id: str, 
+    baseline_mode: bool = False,
     LS_Imagine_specs: Dict = None,
     screenshot_specs: Dict = None,
     reward_specs: Dict = None,
@@ -72,18 +73,25 @@ def _add_wrappers(
     
     env = MinedojoTerminalWrapper(env, **terminal_specs)
 
-    # Add reward shaping wrapper
+    # Add reward shaping wrapper (MineCLIP - used in both baseline and LS-Imagine)
     if clip_specs is not None:
         clip_reward = MinedojoClipReward()
         env = ClipWrapper(env, clip_reward, **clip_specs)
 
-    if concentration_specs is not None:
-        unet_checkpoint_dir = concentration_specs["unet_checkpoint_dir"] if "unet_checkpoint_dir" in concentration_specs else "envs/tasks/base/unet_checkpoint"
-        gaussian_sigma_weight = concentration_specs["gaussian_sigma_weight"] if "gaussian_sigma_weight" in concentration_specs else 0.5
-        concentration_reward = MinedojoConcentrationReward(unet_checkpoint_dir=unet_checkpoint_dir, output_dir=log_dir, gaussian_sigma_weight=gaussian_sigma_weight)
-        env = ConcentrationWrapper(env, concentration_reward, **concentration_specs)
+    # GATE: Only add LS-Imagine wrappers if not in baseline mode
+    if not baseline_mode:
+        # LS-Imagine mode: add concentration and LSImagine wrappers
+        if concentration_specs is not None:
+            unet_checkpoint_dir = concentration_specs["unet_checkpoint_dir"] if "unet_checkpoint_dir" in concentration_specs else "envs/tasks/base/unet_checkpoint"
+            gaussian_sigma_weight = concentration_specs["gaussian_sigma_weight"] if "gaussian_sigma_weight" in concentration_specs else 0.5
+            concentration_reward = MinedojoConcentrationReward(unet_checkpoint_dir=unet_checkpoint_dir, output_dir=log_dir, gaussian_sigma_weight=gaussian_sigma_weight)
+            env = ConcentrationWrapper(env, concentration_reward, **concentration_specs)
 
-    env = MinedojoLSImagineWrapper(env, **LS_Imagine_specs)
+        env = MinedojoLSImagineWrapper(env, **LS_Imagine_specs)
+    else:
+        # Baseline mode: use minimal observation wrapper (no LS fields)
+        from envs.tasks.base import BaselineObsWrapper
+        env = BaselineObsWrapper(env)
 
     # If we don't care about start position, use fast reset to speed training and prevent memory leaks
     if fast_reset is not None:

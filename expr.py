@@ -166,7 +166,8 @@ def make_env(config, mode, id):
 
         kwargs=dict(
                 log_dir=log_dir,
-                target_item=config.target_item
+                target_item=config.target_item,
+                baseline_mode=getattr(config, 'baseline_mode', False)
             )
         env = minedojo.make_env(task, **kwargs)
         env = wrappers.OneHotAction(env)
@@ -288,6 +289,7 @@ def main(config): # config is namespace
             limit=config.dataset_size,
             steps=prefill,
             is_training=False,
+            baseline_mode=getattr(config, 'baseline_mode', False),
         )
 
         logger.step += prefill * config.action_repeat
@@ -305,6 +307,38 @@ def main(config): # config is namespace
     ).to(config.device)
 
     agent.requires_grad_(requires_grad=False)
+    
+    # Baseline mode validation
+    if getattr(config, 'baseline_mode', False):
+        print("=" * 60)
+        print("RUNNING DREAMERV3 BASELINE MODE")
+        print("=" * 60)
+        
+        # Hard assertions for baseline hyperparameters
+        assert config.long_term_branch_weight == 0, \
+            f"baseline requires beta_long=0, got {config.long_term_branch_weight}"
+        assert config.jump_prob == 0, \
+            f"baseline requires jump_prob=0, got {config.jump_prob}"
+        print("✓ Baseline hyperparameters validated (beta_long=0, jump_prob=0)")
+        
+        # Verify observation space (no LS fields)
+        sample_obs = train_envs[0].reset()()
+        LS_obs_fields = ['heatmap', 'jump', 'intrinsic', 'is_zoomed', 'score', 
+                         'zoomed_image', 'jumping_steps', 'accumulated_reward']
+        for field in LS_obs_fields:
+            assert field not in sample_obs, \
+                f"baseline must not have {field} in obs, found: {list(sample_obs.keys())}"
+        print(f"✓ Observation space validated (LS fields absent)")
+        print(f"  Obs keys: {list(sample_obs.keys())}")
+        
+        # Verify model heads (LS heads absent)
+        LS_head_names = ['jump', 'intrinsic', 'jumping_steps', 'accumulated_reward']
+        for head_name in LS_head_names:
+            assert head_name not in agent._wm.heads, \
+                f"baseline must not have {head_name} head, found: {list(agent._wm.heads.keys())}"
+        print(f"✓ Model architecture validated (LS heads absent)")
+        print(f"  Head keys: {list(agent._wm.heads.keys())}")
+        print("=" * 60)
     
     if (logdir / "latest.pt").exists():
         checkpoint = torch.load(logdir / "latest.pt")
@@ -332,6 +366,7 @@ def main(config): # config is namespace
                 is_eval=True,
                 episodes=config.eval_episode_num,
                 is_training=False,
+                baseline_mode=getattr(config, 'baseline_mode', False),
             )
             if config.video_pred_log:
                 video_pred = agent._wm.video_pred(next(eval_dataset))
@@ -352,6 +387,7 @@ def main(config): # config is namespace
             steps=config.eval_every, 
             state=state,
             is_training=True,
+            baseline_mode=getattr(config, 'baseline_mode', False),
         )
 
         items_to_save = {
