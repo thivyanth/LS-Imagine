@@ -492,7 +492,8 @@ class WorldModel(nn.Module):
 
         if not zoomed:
             obs["image"] = torch.Tensor(obs["image"]) / 255.0
-            obs["heatmap"] = torch.Tensor(obs["heatmap"]).unsqueeze(-1) / 255.0
+            if "heatmap" in obs:
+                obs["heatmap"] = torch.Tensor(obs["heatmap"]).unsqueeze(-1) / 255.0
             if "action" in obs:
                 original_action = obs["action"]
                 zeros_array = np.zeros((original_action.shape[0], original_action.shape[1], 1), dtype=original_action.dtype)
@@ -529,9 +530,13 @@ class WorldModel(nn.Module):
         if zoomed:
             obs['is_first'] = np.zeros_like(obs['is_first'])
 
-        obs["is_zoomed"] = torch.Tensor(obs["is_zoomed"]).unsqueeze(-1)
-        obs["jump"] = torch.Tensor(obs["jump"]).unsqueeze(-1)
-        obs["is_calculated"] = torch.Tensor(obs["is_calculated"]).unsqueeze(-1)
+        if "is_zoomed" in obs:
+            obs["is_zoomed"] = torch.Tensor(obs["is_zoomed"]).unsqueeze(-1)
+        if "jump" in obs:
+            obs["jump"] = torch.Tensor(obs["jump"]).unsqueeze(-1)
+        if "is_calculated" in obs:
+            obs["is_calculated"] = torch.Tensor(obs["is_calculated"]).unsqueeze(-1)
+        
         obs["end"] = torch.Tensor(obs["is_terminal"]).unsqueeze(-1)
         obs = {k: torch.Tensor(v).to(self._config.device) for k, v in obs.items()}
         return obs
@@ -687,6 +692,8 @@ class ImagBehavior(nn.Module):
                     lambda_=self._config.discount_lambda, 
                     axis=0
                 )
+                # target = torch.stack(target, dim=0)
+                # lambda_return already returns a tensor, no need to stack
                 
                 weights = torch.cumprod(
                     torch.cat([torch.ones_like(discount[:1]), discount[:-1]], 0), 0
@@ -897,7 +904,6 @@ class ImagBehavior(nn.Module):
         with tools.RequiresGrad(self.value):
             with torch.cuda.amp.autocast(self._use_amp):
                 value = self.value(value_input[:-1].detach())
-                target = torch.stack(target, dim=1)
 
                 value_loss = -value.log_prob(target.detach())
                 slow_target = self._slow_value(value_input[:-1].detach())
@@ -1122,7 +1128,6 @@ class ImagBehavior(nn.Module):
         inp = imag_feat.detach()
         policy = self.actor(inp)
         # Q-val for actor is not transformed using symlog
-        target = torch.stack(target, dim=1)
         if self._config.reward_EMA:
             offset, scale = self.reward_ema(target, self.ema_vals)
             normed_target = (target - offset) / scale
