@@ -160,6 +160,8 @@ dreamer_baseline:
   baseline_mode: True
   jump_prob: 0.0
   long_term_branch_weight: 0.0
+  encoder: {cnn_keys: '^image$'}
+  decoder: {cnn_keys: '^image$'}
 
 debug:
   debug: True
