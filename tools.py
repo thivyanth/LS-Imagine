@@ -298,8 +298,9 @@ def simulate(
                 add_to_cache(cache, envs[index].id, t, baseline_mode=baseline_mode)
 
                 current_step = 0
-                if t["is_zoomed"] == True:
-                    step_calculator.add(envs[index].id, current_step, t["score_on_zoomed"])
+                if not baseline_mode:
+                    if t.get("is_zoomed", False) == True:
+                        step_calculator.add(envs[index].id, current_step, t["score_on_zoomed"])
 
                 # replace obs with done by initial state
                 obs[index] = result
@@ -363,18 +364,21 @@ def simulate(
 
             length = len(cache[env.id]["reward"]) 
             current_step = length - 1
-            if transition["is_zoomed"] == True and not d:
-                step_calculator.add(env.id, current_step, transition["score_on_zoomed"])
+            if not baseline_mode:
+                if transition.get("is_zoomed", False) == True and not d:
+                    step_calculator.add(env.id, current_step, transition["score_on_zoomed"])
 
-            tmp_list = step_calculator.get_and_remove_less_than(env.id, current_step, transition["score"])
-            if len(tmp_list) > 0:
-                for ss in tmp_list:
-                    cache[env.id]["jumping_steps"][ss] = current_step - ss
-                    cache[env.id]["accumulated_reward"][ss] = calculate_accumulated_reward(cache[env.id]["reward"][ss+1:current_step], cache[env.id]["intrinsic"][ss+1:current_step], gamma)
-                    cache[env.id]["is_calculated"][ss] = True
-
-            if step_calculator.count_data_pairs(env.id) == 0:
-                information[tmp_index]['real_done'] = True
+                tmp_list = step_calculator.get_and_remove_less_than(env.id, current_step, transition["score"])
+                if len(tmp_list) > 0:
+                    for ss in tmp_list:
+                        cache[env.id]["jumping_steps"][ss] = current_step - ss
+                        cache[env.id]["accumulated_reward"][ss] = calculate_accumulated_reward(cache[env.id]["reward"][ss+1:current_step], cache[env.id]["intrinsic"][ss+1:current_step], gamma)
+                        cache[env.id]["is_calculated"][ss] = True
+            
+                if step_calculator.count_data_pairs(env.id) == 0:
+                    information[tmp_index]['real_done'] = True
+            else:
+                 information[tmp_index]['real_done'] = True
 
         if done.any():
             indices = [index for index, d in enumerate(done) if d]
@@ -949,8 +953,7 @@ def static_scan_for_lambda_return(fn, inputs, start):
             outputs = torch.cat([outputs, last], dim=-1)
     outputs = torch.reshape(outputs, [outputs.shape[0], outputs.shape[1], 1])
     outputs = torch.flip(outputs, [1])
-    outputs = torch.unbind(outputs, dim=0)
-    return outputs
+    return outputs.permute(1, 0, 2)
 
 
 def lambda_return_for_ls_imagine(reward, value, gamma, end, jumping_steps, accumulated_reward, bootstrap, lambda_, axis):
