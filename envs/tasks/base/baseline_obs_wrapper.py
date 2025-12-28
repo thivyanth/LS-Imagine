@@ -124,20 +124,45 @@ class BaselineObsWrapper(Wrapper, ABC):
 
     def _obs(self, obs):
         """Process observation to standard DreamerV3 format - NO LS fields"""
+        # DEBUG PRINT
+        # if obs.get('is_first', False):
+        #     print(f"DEBUG: Observation keys: {list(obs.keys())}")
+        #     for k in ['inventory', 'inventory_max', 'equipment', 'equipped_items', 'life_stats']:
+        #         if k in obs:
+        #             print(f"DEBUG: key '{k}' type: {type(obs[k])}")
+        #             if isinstance(obs[k], dict):
+        #                 print(f"DEBUG: key '{k}' subkeys: {list(obs[k].keys())}")
+
         image = obs['rgb']  # 3 * H * W
         image = image.transpose(1, 2, 0).astype(np.uint8)  # H * W * 3
         image = cv2.resize(image, (64, 64))  # 64 * 64 * 3
 
+        def get_quantity(x, shape):
+            if isinstance(x, dict) and 'quantity' in x:
+                val = np.array(x['quantity'], dtype=np.float32)
+            elif isinstance(x, (np.ndarray, list)):
+                val = np.array(x, dtype=np.float32)
+            else:
+                val = np.zeros(shape, dtype=np.float32)
+            
+            if val.size != np.prod(shape):
+                # pad or truncate
+                res = np.zeros(shape, dtype=np.float32)
+                size = min(val.size, res.size)
+                res.flat[:size] = val.flat[:size]
+                return res
+            return val.reshape(shape)
+
         # Standard DreamerV3 observations only
         processed_obs = {
             'image': image,
-            'inventory': obs.get('inventory', np.zeros(41, dtype=np.float32)),
-            'inventory_max': obs.get('inventory_max', np.zeros(41, dtype=np.float32)),
-            'equipped': obs.get('equipped', np.zeros(8, dtype=np.float32)),
-            'health': obs.get('health', np.zeros(1, dtype=np.float32)),
-            'hunger': obs.get('hunger', np.zeros(1, dtype=np.float32)),
-            'breath': obs.get('breath', np.zeros(1, dtype=np.float32)),
-            'obs_reward': obs.get('obs_reward', np.array([0.0], dtype=np.float32)),
+            'inventory': get_quantity(obs.get('inventory'), (41,)),
+            'inventory_max': get_quantity(obs.get('inventory_max'), (41,)),
+            'equipped': get_quantity(obs.get('equipped_items', obs.get('equipped')), (8,)),
+            'health': np.array(obs.get('life_stats', {}).get('life', [20.0]), dtype=np.float32).reshape(1) if 'life_stats' in obs else np.zeros(1, dtype=np.float32),
+            'hunger': np.array(obs.get('life_stats', {}).get('food', [20.0]), dtype=np.float32).reshape(1) if 'life_stats' in obs else np.zeros(1, dtype=np.float32),
+            'breath': np.array(obs.get('life_stats', {}).get('air', [300.0]), dtype=np.float32).reshape(1) if 'life_stats' in obs else np.zeros(1, dtype=np.float32),
+            'obs_reward': np.array(obs.get('obs_reward', [0.0]), dtype=np.float32).reshape(1),
             'is_first': obs['is_first'],
             'is_last': obs['is_last'],
             'is_terminal': obs['is_terminal'],
