@@ -111,6 +111,7 @@ def main(config):
             is_eval=True,
             episodes=config.eval_episode_num,
             is_training=False,
+            baseline_mode=getattr(config, "baseline_mode", False),
         )
         if config.video_pred_log:
             video_pred = agent._wm.video_pred(next(eval_dataset))

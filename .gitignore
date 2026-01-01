@@ -53,3 +53,6 @@ external/libs/
 # Ignore DynDream_exprs.sh
 DynDream_exprs.sh
 checkpoints
+
+test_run_baseline
+test_run_ls

@@ -1,3 +1,14 @@
+"""
+This script is used to run the LS-Imagine pipeline.
+python pipeline.py \
+    --mode dreamer_baseline \
+    --tasks harvest_log_in_plains+mine_iron_ore
+    
+python pipeline.py \
+    --mode ls_imagine \
+    --tasks harvest_log_in_plains
+"""
+
 import subprocess
 import os
 import argparse
@@ -41,6 +52,39 @@ def main():
     parser.add_argument("--tasks", nargs="+", default=TASKS, help="Tasks to run")
     parser.add_argument("--steps", type=str, default=STEPS, help="Training steps")
     parser.add_argument("--eval-episodes", type=int, default=EVAL_EPISODES, help="Evaluation episodes")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed for training (forwarded to expr.py as --seed)")
+    parser.add_argument("--envs", type=int, default=None, help="Number of envs (forwarded to expr.py/test.py as --envs)")
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        default=False,
+        help="Use process-based Parallel env wrapper (forwarded to expr.py/test.py as --parallel True)",
+    )
+    parser.add_argument(
+        "--eval-envs",
+        type=int,
+        default=4,
+        help="If set, overrides --envs for evaluation only (forwarded to test.py as --envs)",
+    )
+    parser.add_argument(
+        "--eval-parallel",
+        action="store_true",
+        default=True,
+        help="If set, enables parallel envs for evaluation only (forwarded to test.py as --parallel True)",
+    )
+    parser.add_argument(
+        "--eval-checkpoint-dir",
+        type=str,
+        default=None,
+        help="If set, evaluate this checkpoint directory (must contain latest.pt) instead of the run's logdir.",
+    )
+    parser.add_argument(
+        "--eval-mode",
+        type=str,
+        default=None,
+        choices=["ls_imagine", "dreamer_baseline"],
+        help="If set, use this mode's config for evaluation (otherwise uses --mode).",
+    )
     
     # Stage toggles
     parser.add_argument("--run-collect", action="store_true", default=not SKIP_COLLECT, help="Run collection stage")
@@ -95,27 +139,49 @@ def main():
         # [Stage 4] Train agent
         if not args.skip_training:
             print("[4/5] Training agent...")
-            run_cmd([
+            cmd = [
                 "xvfb-run", "-a", "python", "expr.py",
                 "--configs", "minedojo", MODE,
                 "--task", full_task,
                 "--steps", str(steps_str),
                 "--logdir", logdir
-            ])
+            ]
+            if args.seed is not None:
+                cmd += ["--seed", str(args.seed)]
+            if args.envs is not None:
+                cmd += ["--envs", str(args.envs)]
+            if args.parallel:
+                cmd += ["--parallel", "True"]
+            run_cmd(cmd)
         else:
             print("[4/5] SKIPPED: Training")
 
         # [Stage 5] Evaluate
         if not args.skip_eval:
             print("[5/5] Evaluating agent...")
-            checkpoint = os.path.join(logdir, "latest.pt")
-            if os.path.exists(checkpoint):
-                run_cmd([
-                    "sh", "./scripts/test.sh",
-                    checkpoint, str(eval_episodes), full_task
-                ])
+            checkpoint_dir = args.eval_checkpoint_dir or logdir
+            checkpoint_file = os.path.join(checkpoint_dir, "latest.pt")
+            if os.path.exists(checkpoint_file):
+                eval_mode = args.eval_mode or MODE
+                eval_envs = args.eval_envs if args.eval_envs is not None else args.envs
+                eval_parallel = args.eval_parallel or args.parallel
+                cmd = [
+                    "xvfb-run", "-a", "python", "test.py",
+                    "--configs", "minedojo", eval_mode,
+                    "--task", full_task,
+                    "--logdir", "./logdir",
+                    "--agent_checkpoint_dir", checkpoint_dir,
+                    "--eval_episode_num", str(eval_episodes),
+                ]
+                if args.seed is not None:
+                    cmd += ["--seed", str(args.seed)]
+                if eval_envs is not None:
+                    cmd += ["--envs", str(eval_envs)]
+                if eval_parallel:
+                    cmd += ["--parallel", "True"]
+                run_cmd(cmd)
             else:
-                print(f"Evaluation skipped: Checkpoint {checkpoint} not found.")
+                print(f"Evaluation skipped: Checkpoint {checkpoint_file} not found.")
         else:
             print("[5/5] SKIPPED: Evaluation")
 

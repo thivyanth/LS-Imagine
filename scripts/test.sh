@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [ "$#" -lt 3 ]; then
-  echo "Usage: ./scripts/test.sh <path_to_latest.pt> <eval_episode_num> <task_name>"
+  echo "Usage: ./scripts/test.sh <checkpoint_dir_containing_latest.pt> <eval_episode_num> <task_name_without_minedojo_prefix>"
   exit 1
 fi
 

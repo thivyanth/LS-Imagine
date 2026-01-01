@@ -431,6 +431,11 @@ def simulate(
                         eval_first_success_step = []
                         eval_done = False
                     # start counting scores for evaluation
+                    ep_score = score
+                    ep_length = length
+                    ep_suc = suc
+                    ep_first_success_step = first_success_step
+
                     eval_scores.append(score)
                     eval_lengths.append(length)
                     eval_success.append(suc)
@@ -446,13 +451,22 @@ def simulate(
 
                     logger.video(f"eval_policy", np.array(video)[None])
 
+                    # Live logging: update wandb/tensorboard each completed eval episode.
+                    # Use an always-increasing step so the plot updates over time even though logger.step
+                    # is constant during evaluation-only runs.
+                    live_step = int(logger.step) + int(len(eval_scores))
+                    logger.scalar("eval_episode_return", ep_score)
+                    logger.scalar("eval_episode_length", ep_length)
+                    logger.scalar("eval_episode_success", ep_suc)
+                    logger.scalar("eval_episode_first_success_step", ep_first_success_step)
+                    logger.scalar("eval_return", score)
+                    logger.scalar("eval_length", length)
+                    logger.scalar("eval_episodes", len(eval_scores))
+                    logger.scalar("eval_success", success_rate)
+                    logger.scalar("eval_first_success_step", first_success_step)
+                    logger.write(step=live_step)
+
                     if len(eval_scores) >= episodes and not eval_done:
-                        logger.scalar(f"eval_return", score)
-                        logger.scalar(f"eval_length", length)
-                        logger.scalar(f"eval_episodes", len(eval_scores))
-                        logger.scalar(f"eval_success", success_rate)
-                        logger.scalar(f"eval_first_success_step", first_success_step)
-                        logger.write(step=logger.step)
                         eval_done = True
     if is_eval:
         # keep only last item for saving memory. this cache is used for video_pred later
