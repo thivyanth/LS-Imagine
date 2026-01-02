@@ -76,7 +76,7 @@ def _add_wrappers(
     # Add reward shaping wrapper (MineCLIP - used in both baseline and LS-Imagine)
     if clip_specs is not None:
         clip_reward = MinedojoClipReward()
-        env = ClipWrapper(env, clip_reward, **clip_specs)
+        env = ClipWrapper(env, clip_reward, baseline_mode=baseline_mode, **clip_specs)
 
     # GATE: Only add LS-Imagine wrappers if not in baseline mode
     if not baseline_mode:

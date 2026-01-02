@@ -360,6 +360,8 @@ def simulate(
             transition["discount"] = info.get("discount", np.array(1 - float(d)))
             transition["success"] = info.get("success", False)
             transition["first_success_step"] = info.get("first_success_step", max_steps)
+            # Track MineCLIP reward for logging
+            transition["log_mineclip_reward"] = info.get("clip_score", 0.0)
             add_to_cache(cache, env.id, transition, baseline_mode=baseline_mode)
 
             length = len(cache[env.id]["reward"]) 
@@ -396,6 +398,11 @@ def simulate(
                 first_success_step = min(cache[envs[i].id]["first_success_step"][-1], max_steps)
                 video = cache[envs[i].id]["image"]
                 
+                # Calculate clip_score contribution
+                clip_score = 0.0
+                if "log_mineclip_reward" in cache[envs[i].id]:
+                    clip_score = float(np.array(cache[envs[i].id]["log_mineclip_reward"])[0:max_steps+1].sum())
+                
                 # record logs given from environments
                 for key in list(cache[envs[i].id].keys()):
                     if "log_" in key:
@@ -417,6 +424,7 @@ def simulate(
                     step_in_dataset = erase_over_episodes(cache, limit)
                     logger.scalar(f"dataset_size", step_in_dataset)
                     logger.scalar(f"train_return", score)
+                    logger.scalar(f"train_clip_score", clip_score)
                     logger.scalar(f"train_length", length)
                     logger.scalar(f"train_episodes", len(cache))
                     logger.scalar(f"train_success", suc)
@@ -429,21 +437,25 @@ def simulate(
                         eval_scores = []
                         eval_success = []
                         eval_first_success_step = []
+                        eval_clip_scores = []
                         eval_done = False
                     # start counting scores for evaluation
                     ep_score = score
                     ep_length = length
                     ep_suc = suc
                     ep_first_success_step = first_success_step
+                    ep_clip_score = clip_score
 
                     eval_scores.append(score)
                     eval_lengths.append(length)
                     eval_success.append(suc)
                     eval_first_success_step.append(first_success_step)
+                    eval_clip_scores.append(clip_score)
 
                     score = sum(eval_scores) / len(eval_scores)
                     length = sum(eval_lengths) / len(eval_lengths)
                     success_rate = sum(eval_success) / len(eval_success)
+                    avg_clip_score = sum(eval_clip_scores) / len(eval_clip_scores)
                     if len(eval_first_success_step) > 0:
                         first_success_step = sum(eval_first_success_step) / len(eval_first_success_step)
                     else:
@@ -456,10 +468,12 @@ def simulate(
                     # is constant during evaluation-only runs.
                     live_step = int(logger.step) + int(len(eval_scores))
                     logger.scalar("eval_episode_return", ep_score)
+                    logger.scalar("eval_episode_clip_score", ep_clip_score)
                     logger.scalar("eval_episode_length", ep_length)
                     logger.scalar("eval_episode_success", ep_suc)
                     logger.scalar("eval_episode_first_success_step", ep_first_success_step)
                     logger.scalar("eval_return", score)
+                    logger.scalar("eval_clip_score", avg_clip_score)
                     logger.scalar("eval_length", length)
                     logger.scalar("eval_episodes", len(eval_scores))
                     logger.scalar("eval_success", success_rate)

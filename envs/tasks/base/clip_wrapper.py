@@ -3,7 +3,7 @@ import torch as th
 
 
 class ClipWrapper(Wrapper):
-    def __init__(self, env, clip, prompts=None, dense_reward=.01, smoothing=1, target_object='log', **kwargs):
+    def __init__(self, env, clip, prompts=None, dense_reward=.01, smoothing=1, target_object='log', baseline_mode=False, **kwargs):
         super().__init__(env)
         self.clip = clip # ClipReward
         self.wrapper_name = "ClipWrapper"
@@ -13,6 +13,7 @@ class ClipWrapper(Wrapper):
         self.expl_prompt = [f"Explore the widest possible area to find {target_object}"]
         self.dense_reward = dense_reward
         self.smoothing = smoothing
+        self.baseline_mode = baseline_mode
         
         self.buffer = None
         self._clip_state = None, None
@@ -75,7 +76,11 @@ class ClipWrapper(Wrapper):
 
         info["clip_score"] = obs['intrinsic']
         info["clip_last_score"] = self.last_score
-        info["clip_dense_reward"] = self.dense_reward    
+        info["clip_dense_reward"] = self.dense_reward
+        
+        # DreamerV3 baseline: add MineCLIP shaping directly to reward (paper uses r_env + r_MineCLIP)
+        if self.baseline_mode:
+            reward = reward + obs['intrinsic']
 
         return obs, reward, done, info 
 
