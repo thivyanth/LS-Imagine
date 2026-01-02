@@ -662,7 +662,7 @@ class ImagBehavior(nn.Module):
             )
     
     def _train_baseline(self, start, objective, is_end):
-        """Pure DreamerV3 imagination: no jumps, standard lambda returns"""
+        """Corrected DreamerV3 imagination: handles termination and config gradients"""
         self._update_slow_target()
         metrics = {}
         
@@ -671,19 +671,23 @@ class ImagBehavior(nn.Module):
                 flatten = lambda x: x.reshape([-1] + list(x.shape[2:]))
                 start = {k: flatten(v) for k, v in start.items()}
                 
-                # Standard imagination only (no _jumpy)
+                # 1. Standard imagination
                 imag_feat, imag_state, imag_action = self._imagine(
                     start, self.actor, self._config.imag_horizon
                 )
                 
-                # Predicted rewards (no intrinsic addition)
+                # 2. Predicted rewards
                 reward = objective(imag_feat, imag_state, imag_action)
                 
-                # Standard lambda returns (no jumping_steps, no accumulated_reward)
-                discount = self._config.discount * torch.ones_like(reward)
+                # [FIX 1] Handle Termination correctly
+                # Previous code ignored is_end, causing value overestimation on success
+                end = is_end(imag_state)
+                gamma = self._config.discount * torch.ones_like(reward)
+                discount = gamma * (1.0 - end)
+                
                 value = self.value(imag_feat).mode()
                 
-                # Use standard lambda_return (NOT lambda_return_for_ls_imagine)
+                # Calculate lambda returns with proper discount/termination
                 target = tools.lambda_return(
                     reward[1:], 
                     value[:-1], 
@@ -692,30 +696,34 @@ class ImagBehavior(nn.Module):
                     lambda_=self._config.discount_lambda, 
                     axis=0
                 )
-                # target = torch.stack(target, dim=0)
-                # lambda_return already returns a tensor, no need to stack
                 
                 weights = torch.cumprod(
-                    torch.cat([torch.ones_like(discount[:1]), discount[:-1]], 0), 0
+                    torch.cat([torch.ones_like(discount[:1]), discount[:-1]], 0), 
+                    dim=0
                 ).detach()
                 
-                # Actor loss (no jump masking - optimize on ALL steps)
-                actor_target = target - value[:-1].detach()
-                if self._config.reward_EMA:
-                    offset, scale = self.reward_ema(target, self.ema_vals)
-                    normed_target = (target - offset) / scale
-                    normed_base = (value[:-1] - offset) / scale
-                    actor_target = normed_target - normed_base
-                    metrics.update(tools.tensorstats(normed_target, "normed_target"))
-                    metrics["EMA_005"] = to_np(self.ema_vals[0])
-                    metrics["EMA_095"] = to_np(self.ema_vals[1])
+                # [FIX 2] Respect 'imag_gradient' config (Reinforce vs Dynamics)
+                # Create a dummy jump record (all zeros) so we process every step
+                jump_record = torch.zeros_like(reward) 
+                base = value[:-1].detach()
+
+                # Reuse the logic from LS-Imagine to support REINFORCE/Dynamics switching
+                actor_loss, mets = self._compute_actor_loss(
+                    imag_feat,
+                    imag_action,
+                    target,
+                    weights,
+                    base,
+                    jump_record,
+                )
+                metrics.update(mets)
                 
-                actor_loss = -weights[:-1] * actor_target
+                # Add entropy regularization
                 actor_ent = self.actor(imag_feat).entropy()
                 actor_loss -= self._config.actor["entropy"] * actor_ent[:-1, ..., None]
                 actor_loss = torch.mean(actor_loss)
         
-        # Value update
+        # Value function update
         with tools.RequiresGrad(self.value):
             with torch.cuda.amp.autocast(self._use_amp):
                 value = self.value(imag_feat[:-1].detach())
@@ -725,6 +733,7 @@ class ImagBehavior(nn.Module):
                     value_loss -= value.log_prob(slow_target.mode().detach())
                 value_loss = torch.mean(weights[:-1] * value_loss[:, :, None])
         
+        # Logging metrics
         metrics.update(tools.tensorstats(value.mode(), "value"))
         metrics.update(tools.tensorstats(target, "target"))
         metrics.update(tools.tensorstats(reward, "imag_reward"))
