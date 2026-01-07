@@ -108,17 +108,38 @@ class Logger:
         self._initial_step = step
 
         if self._wandb:
+            # --- W&B tags ---
+            # Priority:
+            # 1) Explicit env override via WANDB_TAGS (comma-separated)
+            # 2) Infer from config.baseline_mode (used by pipeline to distinguish baseline vs LS-Imagine)
+            tags_env = os.environ.get("WANDB_TAGS", "")
+            if tags_env.strip():
+                wandb_tags = [t.strip() for t in tags_env.split(",") if t.strip()]
+            else:
+                wandb_tags = ["baseline"] if getattr(config, "baseline_mode", False) else ["LS-Imagine"]
+
             if config.wandb_key is None:
                 raise ValueError("wandb_key is None")
             wandb.login(key=config.wandb_key)
-            wandb.init(project="LS-Imagine",
-                       dir=str(logdir),
-                       config = config.__dict__,
-                       name = str(logdir),
-                       save_code=True,
-                       tags=["LS-Imagine"],
-                       entity="agents-world-model-research")
-            wandb.config.update({"initial_step": step})
+            # Optional resuming of an existing run:
+            # - Set WANDB_RUN_ID to the run id (e.g. umrbwydu)
+            # - Set WANDB_RESUME to "must" (or "allow")
+            wandb_run_id = os.environ.get("WANDB_RUN_ID") or None
+            wandb_resume = os.environ.get("WANDB_RESUME") or None
+
+            wandb.init(
+                project="LS-Imagine",
+                dir=str(logdir),
+                config=config.__dict__,
+                name=str(logdir),
+                save_code=True,
+                tags=wandb_tags,
+                entity="agents-world-model-research",
+                id=wandb_run_id,
+                resume=wandb_resume,
+            )
+            # On resumed runs, this key may already exist; allow updating it.
+            wandb.config.update({"initial_step": step}, allow_val_change=True)
 
         else:
             self._writer = SummaryWriter(log_dir=str(logdir), max_queue=1000)
@@ -464,9 +485,12 @@ def simulate(
                     logger.video(f"eval_policy", np.array(video)[None])
 
                     # Live logging: update wandb/tensorboard each completed eval episode.
-                    # Use an always-increasing step so the plot updates over time even though logger.step
-                    # is constant during evaluation-only runs.
-                    live_step = int(logger.step) + int(len(eval_scores))
+                    # IMPORTANT: Keep `step` consistent with training (`logger.step`) so W&B steps never
+                    # go backwards (eval runs happen between train iterations).
+                    #
+                    # If you want an always-increasing x-axis for per-episode eval curves, log an extra
+                    # counter metric (e.g. `eval_episode_idx`) instead of modifying `step`.
+                    live_step = int(logger.step)
                     logger.scalar("eval_episode_return", ep_score)
                     logger.scalar("eval_episode_clip_score", ep_clip_score)
                     logger.scalar("eval_episode_length", ep_length)

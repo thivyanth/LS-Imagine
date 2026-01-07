@@ -2,11 +2,12 @@
 This script is used to run the LS-Imagine pipeline.
 python pipeline.py \
     --mode dreamer_baseline \
-    --tasks harvest_log_in_plains+mine_iron_ore
+    --tasks harvest_sand
     
 python pipeline.py \
     --mode ls_imagine \
-    --tasks harvest_log_in_plains
+    --tasks shear_sheep \
+    --seed 1
 """
 
 import subprocess
@@ -17,11 +18,11 @@ from datetime import datetime
 # --- 1. CORE SETTINGS ---
 os.environ["MINEDOJO_HEADLESS"] = "1"
 TASKS = [
-    "harvest_log_in_plains", 
-    # "mine_iron_ore", 
+    # "harvest_log_in_plains", 
+    "mine_iron_ore", 
     # "shear_sheep", 
-    # "harvest_water_with_bucket", 
-    # "harvest_sand"
+    "harvest_water_with_bucket", 
+    "harvest_sand"
          ]  # Add more: ["harvest_log_in_plains", "mine_iron_ore"]
 STEPS = "1e6"
 
@@ -35,16 +36,20 @@ EVAL_EPISODES = 100
 
 # --- 3. PROMPT DICTIONARY ---
 PROMPTS = {
-    "harvest_log_in_plains": "find and harvest a tree log",
-    "harvest_water_with_bucket": "obtain water",
-    "harvest_sand": "obtain sand",
+    # "harvest_log_in_plains": "find and harvest a tree log",
+    "harvest_log_in_plains": "harvest log in plains",
+    # "harvest_water_with_bucket": "obtain water",
+    "harvest_water_with_bucket": "harvest water with a bucket",
+    # "harvest_sand": "obtain sand",
+    "harvest_sand": "harvest sand",
     "shear_sheep": "obtain wool",
-    "mine_iron_ore": "mine iron ore",
+    # "mine_iron_ore": "mine iron ore",
+    "mine_iron_ore": "mine iron ore with a stone pickaxe",
 }
 
 def run_cmd(cmd):
     print(f"Executing: {' '.join(cmd)}")
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, env=os.environ.copy())
 
 def main():
     parser = argparse.ArgumentParser()
@@ -107,6 +112,10 @@ def main():
         full_task = f"minedojo_{task}"
         timestamp = datetime.now().strftime('%Y%m%dT%H%M%S')
         logdir = f"./logdir/{MODE}_{task}_{timestamp}"
+
+        # Ensure W&B tags reflect the selected mode (used by plotting scripts).
+        # W&B expects comma-separated tags in WANDB_TAGS.
+        os.environ["WANDB_TAGS"] = "baseline" if is_baseline else "LS-Imagine"
         
         print("\n" + "="*60)
         print(f"STARTING PIPELINE FOR: {task}")
@@ -163,6 +172,8 @@ def main():
             checkpoint_file = os.path.join(checkpoint_dir, "latest.pt")
             if os.path.exists(checkpoint_file):
                 eval_mode = args.eval_mode or MODE
+                # If evaluation mode differs from training mode, keep tags consistent with eval.
+                os.environ["WANDB_TAGS"] = "baseline" if (eval_mode == "dreamer_baseline") else "LS-Imagine"
                 eval_envs = args.eval_envs if args.eval_envs is not None else args.envs
                 eval_parallel = args.eval_parallel or args.parallel
                 cmd = [

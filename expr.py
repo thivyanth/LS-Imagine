@@ -189,11 +189,16 @@ def main(config): # config is namespace
     if config.deterministic_run:
         tools.enable_deterministic_run()
 
-    logdir = pathlib.Path(config.logdir).expanduser() 
-    logdir = logdir / config.task
-    logdir = logdir / 'seed_{}'.format(config.seed)
-    timestamp = datetime.now().strftime('%Y%m%dT%H%M%S')
-    logdir = logdir / timestamp
+    # If --logdir points at an existing run folder (contains latest.pt/train_eps),
+    # reuse it for resuming training; otherwise, create the standard task/seed/timestamp subdir.
+    base_logdir = pathlib.Path(config.logdir or "./logdir").expanduser()
+    if (base_logdir / "latest.pt").exists() or (base_logdir / "train_eps").exists():
+        logdir = base_logdir
+    else:
+        logdir = base_logdir / config.task
+        logdir = logdir / "seed_{}".format(config.seed)
+        timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+        logdir = logdir / timestamp
     config.logdir = logdir
     config.traindir = config.traindir or logdir / "train_eps"
     config.evaldir = config.evaldir or logdir / "eval_eps"
