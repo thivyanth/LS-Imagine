@@ -323,7 +323,8 @@ def simulate(
 
             for index, result in zip(indices, results):
                 t = result.copy()
-                t = {k: convert(v) for k, v in t.items()} # convert: convert numpy array to specified precision
+                # Preserve float16 storage for MineCLIP embeddings in replay.
+                t = {k: convert(v, precision=16) if k == "mc_e" else convert(v) for k, v in t.items()}
                 # action will be added to transition in add_to_cache
                 t["reward"] = 0.0
                 t["discount"] = 1.0
@@ -383,7 +384,8 @@ def simulate(
             a, result, env = action[tmp_index], results[tmp_index], envs[tmp_index]
 
             o, r, d, info = result
-            o = {k: convert(v) for k, v in o.items()}
+            # Preserve float16 storage for MineCLIP embeddings in replay.
+            o = {k: convert(v, precision=16) if k == "mc_e" else convert(v) for k, v in o.items()}
             transition = o.copy()
             if isinstance(a, dict):
                 transition.update(a)
@@ -533,7 +535,7 @@ def add_to_cache(cache, id, transition, baseline_mode=False):
             # GATE: Skip LS fields in baseline mode
             if baseline_mode and key in LS_FIELDS:
                 continue
-            cache[id][key] = [convert(val)]
+            cache[id][key] = [convert(val, precision=16) if key == "mc_e" else convert(val)]
     else:
         for key, val in transition.items():
             # GATE: Skip LS fields in baseline mode
@@ -541,10 +543,10 @@ def add_to_cache(cache, id, transition, baseline_mode=False):
                 continue
             if key not in cache[id]:
                 # fill missing data(action, etc.) at second time
-                cache[id][key] = [convert(0 * val)]
-                cache[id][key].append(convert(val))
+                cache[id][key] = [convert(0 * val, precision=16) if key == "mc_e" else convert(0 * val)]
+                cache[id][key].append(convert(val, precision=16) if key == "mc_e" else convert(val))
             else:
-                cache[id][key].append(convert(val))
+                cache[id][key].append(convert(val, precision=16) if key == "mc_e" else convert(val))
 
 
 def erase_over_episodes(cache, dataset_size):

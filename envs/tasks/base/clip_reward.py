@@ -1,5 +1,6 @@
 from typing import List, Tuple, Dict
 import torch as th
+import torch.nn.functional as F
 from omegaconf import OmegaConf
 from mineclip import MineCLIP
 from abc import ABC, abstractstaticmethod
@@ -108,7 +109,9 @@ class ClipReward(ABC):
         curr_frame_feats = self.model.forward_image_features(curr_frame.to(self.device))  # 1 x 1 x 512
 
         if past_frames is None:
-            past_frames = th.zeros((15, curr_frame_feats.shape[-1]))
+            # Spec-matching padding: if we don't yet have 15 past frames, left-pad by
+            # repeating the earliest available frame (at reset this is curr_frame).
+            past_frames = curr_frame_feats.detach().cpu().repeat(1, 15, 1)[0]  # 15 x 512
         past_frames = past_frames.to(self.device)
 
         while len(past_frames.shape) < 3:
@@ -135,8 +138,10 @@ class ClipReward(ABC):
         self,
         obs: Dict,  # 3 x 160 x 256
         prompts: List[str],
-        state: Tuple[th.Tensor, th.Tensor] = None  # history x 512
-    ) -> Tuple[th.Tensor, Tuple[th.Tensor, th.Tensor]]:
+        state: Tuple[th.Tensor, th.Tensor] = None,  # history x 512
+        return_embeds: bool = False,
+        text_select: str = "argmax",  # {"argmax","first"}
+    ):
         curr_frame = self._get_curr_frame(obs)
         past_frames, text_feats = state
 
@@ -146,9 +151,36 @@ class ClipReward(ABC):
 
             image_feats = self._get_image_feats(curr_frame, past_frames)
             video_feats = self._get_video_feats(image_feats)
-            logits = self.model.forward_reward_head(video_feats.to(self.device), text_tokens=text_feats.to(self.device))[0][0]  # P
+            video_feats_d = video_feats.to(self.device)
+            text_feats_d = text_feats.to(self.device)
+            logits = self.model.forward_reward_head(video_feats_d, text_tokens=text_feats_d)[0][0]  # P
 
-        return logits, (image_feats[0, 1:].cpu(), text_feats.cpu())
+            extra = None
+            if return_embeds:
+                # Text-conditioned clip embedding for MPF-LSD:
+                # mc_e = normalize( normalize(v) ⊙ normalize(u) )
+                v = video_feats_d[0]  # 512
+                if text_select == "first":
+                    idx = 0
+                elif text_select == "argmax":
+                    idx = int(th.argmax(logits).item()) if logits.numel() else 0
+                else:
+                    raise ValueError(f"Unknown text_select={text_select}")
+                u = text_feats_d[idx]  # 512
+                v_n = F.normalize(v.float(), dim=-1)
+                u_n = F.normalize(u.float(), dim=-1)
+                mc_e = F.normalize(v_n * u_n, dim=-1)
+                extra = {
+                    "video_feats": video_feats_d.detach().cpu(),   # 1 x 512
+                    "text_feats": text_feats_d.detach().cpu(),     # P x 512
+                    "text_idx": idx,
+                    "mc_e": mc_e.detach().cpu(),                 # 512
+                }
+
+        if return_embeds:
+            return logits, (image_feats[0, 1:].cpu(), text_feats.cpu()), extra
+        else:
+            return logits, (image_feats[0, 1:].cpu(), text_feats.cpu())
 
     def get_reward(
         self, 

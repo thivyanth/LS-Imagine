@@ -1,5 +1,6 @@
 from gym import Wrapper
 import torch as th
+import numpy as np
 
 
 class ClipWrapper(Wrapper):
@@ -29,18 +30,37 @@ class ClipWrapper(Wrapper):
         self.expl_buffer = None
         self.last_score = 0
         self.expl_last_score = 0
+        # 16-frame RGB FIFO (spec-matching). Stored for correctness/debugging;
+        # MineCLIP feature history is maintained inside `self._clip_state`.
+        self._rgb_fifo = []
 
         obs = self.env.reset(**kwargs)
         obs['intrinsic'] = 0.0
         obs['score'] = 0.0
 
+        # Export MPF-LSD embedding for the initial (reset) observation too,
+        # so replay episodes have `mc_e` for every timestep.
+        if len(self.prompt) > 0:
+            logits_state = self.clip.get_logits(
+                obs, self.prompt, self._clip_state, return_embeds=True, text_select="argmax"
+            )
+            logits, self._clip_state, extra = logits_state
+            obs["mc_e"] = extra["mc_e"].numpy().astype(np.float16)
+
         return obs
     
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
+        # Maintain RGB FIFO per env instance (spec-matching semantics).
+        if "rgb" in obs:
+            self._rgb_fifo.append(obs["rgb"].copy())
+            if len(self._rgb_fifo) > 16:
+                self._rgb_fifo.pop(0)
 
         if len(self.prompt) > 0:
-            logits, self._clip_state = self.clip.get_logits(obs, self.prompt, self._clip_state)
+            logits, self._clip_state, extra = self.clip.get_logits(
+                obs, self.prompt, self._clip_state, return_embeds=True, text_select="argmax"
+            )
             logits = logits.detach().cpu()
 
             self.buffer = self._insert_buffer(self.buffer, logits[:1])
@@ -53,6 +73,8 @@ class ClipWrapper(Wrapper):
                 obs['intrinsic'] = 0.0
 
             obs['score'] = self.dense_reward * score
+            # Store text-conditioned 512-d MineCLIP embedding in obs for replay.
+            obs["mc_e"] = extra["mc_e"].numpy().astype(np.float16)
 
         else:
             obs['intrinsic'] = 0.0

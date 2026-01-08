@@ -68,6 +68,8 @@ class BaselineObsWrapper(Wrapper, ABC):
         self.observation_space = spaces.Dict(
             {
                 'image': spaces.Box(low=0, high=255, shape=(64, 64, 3), dtype=np.uint8),
+                # MPF-LSD: frozen MineCLIP text-conditioned embedding stored in replay.
+                'mc_e': spaces.Box(-np.inf, np.inf, (512,), dtype=np.float32),
                 'inventory': spaces.Box(-np.inf, np.inf, (41,), dtype=np.float32),
                 'inventory_max': spaces.Box(-np.inf, np.inf, (41,), dtype=np.float32),
                 'equipped': spaces.Box(-np.inf, np.inf, (8,), dtype=np.float32),
@@ -156,6 +158,8 @@ class BaselineObsWrapper(Wrapper, ABC):
         # Standard DreamerV3 observations only
         processed_obs = {
             'image': image,
+            # Pass through MineCLIP embedding if present (produced by ClipWrapper).
+            'mc_e': np.array(obs.get('mc_e', np.zeros((512,), dtype=np.float32)), dtype=np.float32),
             'inventory': get_quantity(obs.get('inventory'), (41,)),
             'inventory_max': get_quantity(obs.get('inventory_max'), (41,)),
             'equipped': get_quantity(obs.get('equipped_items', obs.get('equipped')), (8,)),

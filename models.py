@@ -49,6 +49,32 @@ class WorldModel(nn.Module):
         shapes = {k: tuple(v.shape) for k, v in obs_space.spaces.items()} # 'image': (64, 64, 3)
         self.encoder = networks.MultiEncoder(shapes, **config.encoder)
         self.embed_size = self.encoder.outdim
+
+        # MPF-LSD: optional MineCLIP fusion for RSSM posterior embed.
+        self._mc_fuse = bool(getattr(config, "mc_fuse", False))
+        self._mc_fuse_zoomed = bool(getattr(config, "mc_fuse_zoomed", True))
+        if self._mc_fuse:
+            mc_dmc = int(getattr(config, "mc_dmc", self.embed_size))
+            if mc_dmc <= 0:
+                mc_dmc = self.embed_size
+            mc_layers = int(getattr(config, "mc_layers", 2))
+            mc_gate_init = float(getattr(config, "mc_gate_init", 0.1))
+            mc_use_ln = bool(getattr(config, "mc_use_ln", True))
+
+            self._mc_projector = networks.MLP(
+                512, None, mc_layers, mc_dmc,
+                act=config.act, norm=config.norm,
+                device=config.device, name="MCProjector",
+            )
+            self._mc_fusion = networks.MLP(
+                self.embed_size + mc_dmc, None, 2, self.embed_size,
+                act=config.act, norm=config.norm,
+                device=config.device, name="MCFusion",
+            )
+            self._mc_gate = nn.Parameter(torch.tensor(mc_gate_init, device=config.device, dtype=torch.float32))
+            self._mc_ln_px = nn.LayerNorm(self.embed_size, eps=1e-3) if mc_use_ln else None
+            self._mc_ln_mc = nn.LayerNorm(mc_dmc, eps=1e-3) if mc_use_ln else None
+
         self.dynamics = networks.RSSM(
             config.dyn_stoch,
             config.dyn_deter,
@@ -203,6 +229,30 @@ class WorldModel(nn.Module):
             return self._train_baseline(data_origin)
         else:
             return self._train_ls_imagine(data_origin)
+
+    def encode(self, obs, zoomed: bool = False):
+        """Posterior encoder input for RSSM: pixels-only (default) or MineCLIP fusion (MPF-LSD)."""
+        px = self.encoder(obs)
+        if not self._mc_fuse:
+            return px
+        if "mc_e" not in obs:
+            raise KeyError("MPF-LSD enabled (mc_fuse=True) but observation batch is missing key 'mc_e'")
+
+        mc_e = obs["mc_e"]
+        if not torch.is_floating_point(mc_e):
+            mc_e = mc_e.float()
+        else:
+            mc_e = mc_e.to(dtype=torch.float32)
+
+        mc = self._mc_projector(mc_e)
+        mc = self._mc_gate * mc
+        if self._mc_ln_px is not None:
+            px = self._mc_ln_px(px)
+        if self._mc_ln_mc is not None:
+            mc = self._mc_ln_mc(mc)
+        fused = torch.cat([px, mc], dim=-1)
+        out = self._mc_fusion(fused)
+        return out
     
     def _train_baseline(self, data_origin):
         """Pure DreamerV3 training: decoder + reward + end prediction only"""
@@ -210,7 +260,7 @@ class WorldModel(nn.Module):
         
         with tools.RequiresGrad(self):
             with torch.cuda.amp.autocast(self._use_amp):
-                embed = self.encoder(data)
+                embed = self.encode(data, zoomed=False)
                 post, prior = self.dynamics.observe(
                     embed, data["action"], data["is_first"]
                 )
@@ -293,8 +343,11 @@ class WorldModel(nn.Module):
         with tools.RequiresGrad(self):
             with torch.cuda.amp.autocast(self._use_amp):
                 
-                embed = self.encoder(data)
-                embed_zoomed = self.encoder(data_zoomed)
+                embed = self.encode(data, zoomed=False)
+                if self._mc_fuse and not self._mc_fuse_zoomed:
+                    embed_zoomed = self.encoder(data_zoomed)
+                else:
+                    embed_zoomed = self.encode(data_zoomed, zoomed=True)
 
                 # process original data
                 post, prior = self.dynamics.observe(
@@ -538,12 +591,15 @@ class WorldModel(nn.Module):
             obs["is_calculated"] = torch.Tensor(obs["is_calculated"]).unsqueeze(-1)
         
         obs["end"] = torch.Tensor(obs["is_terminal"]).unsqueeze(-1)
-        obs = {k: torch.Tensor(v).to(self._config.device) for k, v in obs.items()}
+        # Keep MineCLIP embeddings in float32 on device (replay may store float16).
+        if "mc_e" in obs:
+            obs["mc_e"] = torch.as_tensor(obs["mc_e"], dtype=torch.float32)
+        obs = {k: torch.Tensor(v).to(self._config.device) if k != "mc_e" else obs["mc_e"].to(self._config.device) for k, v in obs.items()}
         return obs
 
     def video_pred(self, data):
         data = self.preprocess(data, zoomed=False)
-        embed = self.encoder(data)
+        embed = self.encode(data, zoomed=False)
 
         states, _ = self.dynamics.observe(
             embed[:6, :5], data["action"][:6, :5], data["is_first"][:6, :5]

@@ -65,6 +65,8 @@ class LSImagineWrapper(Wrapper, ABC):
             {
                 'image': spaces.Box(low=0, high=255, shape=(64, 64, 3), dtype=np.uint8),
                 'heatmap': spaces.Box(low=0, high=255, shape=(64, 64, 1), dtype=np.uint8),
+                # MPF-LSD: frozen MineCLIP text-conditioned embedding stored in replay.
+                'mc_e': spaces.Box(-np.inf, np.inf, (512,), dtype=np.float32),
                 'jump': spaces.Box(-np.inf, np.inf, (1,), dtype=np.uint8),
                 'is_zoomed': spaces.Box(-np.inf, np.inf, (1,), dtype=np.uint8),
                 'is_calculated': spaces.Box(-np.inf, np.inf, (1,), dtype=np.uint8),
@@ -143,6 +145,8 @@ class LSImagineWrapper(Wrapper, ABC):
         obs = {
             'image': image,
             'heatmap': heatmap,
+            # Pass through MineCLIP embedding if present (produced by ClipWrapper).
+            'mc_e': np.array(obs.get('mc_e', np.zeros((512,), dtype=np.float32)), dtype=np.float32),
             'jump': obs['jump'] if 'jump' in obs else False,
             'is_zoomed': obs['is_zoomed'] if 'is_zoomed' in obs else False,
             'is_calculated': obs['is_calculated'] if 'is_calculated' in obs else False,
@@ -171,7 +175,6 @@ class LSImagineWrapper(Wrapper, ABC):
                 space = self.observation_space[key]
                 if not isinstance(value, np.ndarray):
                     value = np.array(value)
-                assert (key, value, value.dtype, value.shape, space)
         return obs
 
     def _action(self, action):

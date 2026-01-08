@@ -44,7 +44,7 @@ PROMPTS = {
     "harvest_sand": "harvest sand",
     "shear_sheep": "obtain wool",
     # "mine_iron_ore": "mine iron ore",
-    "mine_iron_ore": "mine iron ore with a stone pickaxe",
+    "mine_iron_ore": "mine iron ore",
 }
 
 def run_cmd(cmd):
@@ -53,7 +53,13 @@ def run_cmd(cmd):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", type=str, default="dreamer_baseline", choices=["ls_imagine", "dreamer_baseline"], help="Training mode")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="dreamer_baseline",
+        choices=["ls_imagine", "dreamer_baseline", "mpf_lsd", "mpf_lsd_baseline"],
+        help="Training mode (maps to a config section in configs.yaml).",
+    )
     parser.add_argument("--tasks", nargs="+", default=TASKS, help="Tasks to run")
     parser.add_argument("--steps", type=str, default=STEPS, help="Training steps")
     parser.add_argument("--eval-episodes", type=int, default=EVAL_EPISODES, help="Evaluation episodes")
@@ -105,7 +111,7 @@ def main():
     eval_episodes = args.eval_episodes
 
     # Baseline dreamer should physically disable affordance steps
-    is_baseline = (MODE == "dreamer_baseline")
+    is_baseline = (MODE in ("dreamer_baseline", "mpf_lsd_baseline"))
     
     for task in args.tasks:
         prompt = PROMPTS.get(task, "minecraft task")

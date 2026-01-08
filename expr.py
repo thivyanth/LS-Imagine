@@ -85,7 +85,7 @@ class LS_Imagine(nn.Module):
         else:
             latent, action = state
         obs = self._wm.preprocess(obs)
-        embed = self._wm.encoder(obs)
+        embed = self._wm.encode(obs)
         latent, _ = self._wm.dynamics.obs_step(latent, action, embed, obs["is_first"])
         if self._config.eval_state_mean:
             latent["stoch"] = latent["mean"]
@@ -420,7 +420,6 @@ if __name__ == "__main__":
         "--mode",
         type=str,
         default=None,
-        choices=["ls_imagine", "dreamer_baseline"],
         help="Shortcut for '--configs minedojo <mode>' (do not combine with --configs).",
     )
     args, remaining = parser.parse_known_args()

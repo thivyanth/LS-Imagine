@@ -78,6 +78,14 @@ defaults:
   initial: 'learned'
   baseline_mode: False  # Default to False (LS-Imagine mode)
 
+  # MPF-LSD (MineCLIP-Pixel Fusion Long-Short Dreamer): optional posterior fusion.
+  mc_fuse: False
+  mc_fuse_zoomed: True
+  mc_layers: 2
+  mc_dmc: 0  # 0/unused means "match pixel embed dim" (handled in code via default)
+  mc_gate_init: 0.1
+  mc_use_ln: True
+
   # Training
   batch_size: 16
   batch_length: 32
@@ -163,6 +171,20 @@ dreamer_baseline:
   jump_prob: 0.0
   long_term_branch_weight: 0.0
   # Pixels-only DreamerV3 baseline (as in paper): no inventory, health, etc.
+  encoder: {mlp_keys: '$^', cnn_keys: '^image$'}
+  decoder: {mlp_keys: '$^', cnn_keys: '^image$'}
+
+# MPF-LSD variants (enable MineCLIP fusion but keep DreamerV3 + LS-Imagine losses/machinery unchanged)
+mpf_lsd:
+  mc_fuse: True
+  mc_fuse_zoomed: True
+
+mpf_lsd_baseline:
+  baseline_mode: True
+  jump_prob: 0.0
+  long_term_branch_weight: 0.0
+  mc_fuse: True
+  mc_fuse_zoomed: True
   encoder: {mlp_keys: '$^', cnn_keys: '^image$'}
   decoder: {mlp_keys: '$^', cnn_keys: '^image$'}
 
