@@ -152,6 +152,7 @@ def main():
                 "xvfb-run", "-a", "python", "expr.py",
                 "--configs", "minedojo", MODE,
                 "--task", full_task,
+                "--prompt", prompt,
                 "--steps", str(steps_str),
                 "--logdir", logdir
             ]
@@ -180,6 +181,7 @@ def main():
                     "xvfb-run", "-a", "python", "test.py",
                     "--configs", "minedojo", eval_mode,
                     "--task", full_task,
+                    "--prompt", prompt,
                     "--logdir", "./logdir",
                     "--agent_checkpoint_dir", checkpoint_dir,
                     "--eval_episode_num", str(eval_episodes),

@@ -107,6 +107,15 @@ class Logger:
         self._total_steps = config.steps
         self._initial_step = step
 
+        # Persist the resolved run config locally for reproducibility/debugging.
+        # This includes any CLI overrides (e.g., --prompt passed from pipeline.py).
+        try:
+            config_path = pathlib.Path(logdir) / "config.json"
+            with config_path.open("w") as f:
+                json.dump(config.__dict__, f, indent=2, default=str)
+        except Exception as e:
+            print(f"[Logger] Warning: could not write config.json: {e}")
+
         if self._wandb:
             # --- W&B tags ---
             # Priority:
@@ -140,6 +149,9 @@ class Logger:
             )
             # On resumed runs, this key may already exist; allow updating it.
             wandb.config.update({"initial_step": step}, allow_val_change=True)
+            # Ensure prompt is visible in W&B config even if it is added dynamically.
+            if hasattr(config, "prompt"):
+                wandb.config.update({"prompt": getattr(config, "prompt")}, allow_val_change=True)
 
         else:
             self._writer = SummaryWriter(log_dir=str(logdir), max_queue=1000)

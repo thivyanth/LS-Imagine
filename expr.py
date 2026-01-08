@@ -414,6 +414,15 @@ def main(config): # config is namespace
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--configs", nargs="+")
+    # Convenience flag to match `pipeline.py` UX:
+    # `--mode X` is shorthand for `--configs minedojo X` when `--configs` is not provided.
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default=None,
+        choices=["ls_imagine", "dreamer_baseline"],
+        help="Shortcut for '--configs minedojo <mode>' (do not combine with --configs).",
+    )
     args, remaining = parser.parse_known_args()
 
     configs = yaml.safe_load(
@@ -426,6 +435,11 @@ if __name__ == "__main__":
                 recursive_update(base[key], value)
             else:
                 base[key] = value
+
+    if args.configs and args.mode:
+        parser.error("Use either --configs or --mode (not both).")
+    if args.mode and not args.configs:
+        args.configs = ["minedojo", args.mode]
 
     name_list = ["defaults", *args.configs] if args.configs else ["defaults"]
     
