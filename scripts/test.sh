@@ -12,7 +12,7 @@ SEED=1
 
 export MINEDOJO_HEADLESS=1
 python test.py \
-    --configs minedojo \
+    --mode "${MODE:-ls_imagine}" \
     --task minedojo_${TASK_NAME} \
     --logdir ./logdir \
     --agent_checkpoint_dir ${AGENT_CHECKPOINT_DIR} \

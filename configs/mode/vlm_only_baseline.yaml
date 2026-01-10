@@ -1,0 +1,22 @@
+baseline_mode: true
+jump_prob: 0.0
+long_term_branch_weight: 0.0
+
+mc_fuse: false
+video_pred_log: false
+
+encoder:
+  mlp_keys: "^mc_e$"
+  cnn_keys: "$^"
+  mlp_layers: 5
+  mlp_units: 1024
+  symlog_inputs: false
+
+decoder:
+  mlp_keys: "^mc_e$"
+  cnn_keys: "$^"
+  mlp_layers: 5
+  mlp_units: 1024
+  vector_dist: cosine
+  outscale: 1.0
+

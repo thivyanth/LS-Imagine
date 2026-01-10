@@ -99,7 +99,7 @@ LS-Imagine is implemented and tested on Ubuntu 20.04 with python==3.9:
 6. We provide two options for recording data during the training process: TensorBoard and Weights & Biases (wandb). 
 
    - To use TensorBoard, set `use_wandb` to `False` in the `./config.yaml` file.
-   - To use wandb (optional), set `use_wandb` to `True` in the `./config.yaml` file. Additionally, retrieve your wandb API key and set it in the `./config.yaml` file under the field `wandb_key: {your_wandb_api_key}`.
+   - To use wandb (optional), set `use_wandb` to `True` in the `./config.yaml` file and ensure you're authenticated via the W&B CLI (`wandb login`).
 
 
 ### Pretrained Weights
@@ -214,7 +214,7 @@ Additionally, we provide pretrained weights for the tasks mentioned in the paper
 
 
 1. Set up the task for evaluation ([instructions here](./docs/task_setups.md)).
-2. Retrieve your **Weights & Biases (wandb)** API key and set it in the `./config.yaml` file under the field `wandb_key: {your_wandb_api_key}`.
+2. Authenticate **Weights & Biases (wandb)** via the CLI: run `wandb login`.
 3. Run the following command to test the success rate:
     ```bash
     MINEDOJO_HEADLESS=1 python test.py \

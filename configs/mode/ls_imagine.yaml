@@ -1,0 +1,4 @@
+baseline_mode: false
+jump_prob: 0.7
+long_term_branch_weight: 1.0
+

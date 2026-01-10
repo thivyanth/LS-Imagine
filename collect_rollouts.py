@@ -171,25 +171,60 @@ def main(config):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--config",
+        action="append",
+        default=[],
+        help="Path to a YAML config file (repeatable). If set, uses file-based config loading.",
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default=None,
+        help="Shortcut for file-based configs: base + env/minedojo + mode/<mode>.yaml",
+    )
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        help="Override config values, format: key=value (supports dotted keys). Repeatable.",
+    )
     parser.add_argument("--configs", nargs="+")
     args, remaining = parser.parse_known_args()
 
-    configs = yaml.safe_load(
-        (pathlib.Path(sys.argv[0]).parent / "configs.yaml").read_text()
-    )
+    if args.config or args.mode or args.set:
+        from config_loader import load_config_paths, parse_set_kv, resolve_mode_files, set_by_dotted_key
 
-    def recursive_update(base, update):
-        for key, value in update.items():
-            if isinstance(value, dict) and key in base:
-                recursive_update(base[key], value)
-            else:
-                base[key] = value
+        configs_dir = pathlib.Path(__file__).parent / "configs"
+        local_path = configs_dir / "local.yaml"
+        if args.config and args.mode:
+            parser.error("Use either --config or --mode (not both).")
+        if args.config:
+            paths = [pathlib.Path(p) for p in args.config]
+        elif args.mode:
+            paths = resolve_mode_files(args.mode, configs_dir)
+        else:
+            parser.error("When using file-based configs, provide --config or --mode.")
+        defaults = load_config_paths(paths, local_path=local_path)
+        for expr in args.set:
+            k, v = parse_set_kv(expr)
+            set_by_dotted_key(defaults, k, v)
+    else:
+        configs = yaml.safe_load(
+            (pathlib.Path(sys.argv[0]).parent / "configs.yaml").read_text()
+        )
 
-    name_list = ["defaults", *args.configs] if args.configs else ["defaults"]
-    
-    defaults = {}
-    for name in name_list:
-        recursive_update(defaults, configs[name])
+        def recursive_update(base, update):
+            for key, value in update.items():
+                if isinstance(value, dict) and key in base:
+                    recursive_update(base[key], value)
+                else:
+                    base[key] = value
+
+        name_list = ["defaults", *args.configs] if args.configs else ["defaults"]
+        defaults = {}
+        for name in name_list:
+            recursive_update(defaults, configs[name])
 
     parser = argparse.ArgumentParser()
 

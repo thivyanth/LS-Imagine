@@ -763,6 +763,8 @@ class MLP(nn.Module):
             dist = tools.DiscDist(logits=mean, device=self._device)
         elif dist == "symlog_mse":
             dist = tools.SymlogDist(mean)
+        elif dist == "cosine":
+            dist = tools.CosineDist(mean)
         else:
             raise NotImplementedError(dist)
         return dist

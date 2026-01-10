@@ -1,0 +1,14 @@
+baseline_mode: true
+jump_prob: 0.0
+long_term_branch_weight: 0.0
+
+mc_fuse: true
+mc_fuse_zoomed: true
+
+encoder:
+  mlp_keys: "$^"
+  cnn_keys: "^image$"
+decoder:
+  mlp_keys: "$^"
+  cnn_keys: "^image$"
+

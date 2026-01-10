@@ -127,9 +127,8 @@ class Logger:
             else:
                 wandb_tags = ["baseline"] if getattr(config, "baseline_mode", False) else ["LS-Imagine"]
 
-            if config.wandb_key is None:
-                raise ValueError("wandb_key is None")
-            wandb.login(key=config.wandb_key)
+            # Use credentials from `wandb login` (CLI / netrc). Do not store API keys in config.
+            wandb.login()
             # Optional resuming of an existing run:
             # - Set WANDB_RUN_ID to the run id (e.g. umrbwydu)
             # - Set WANDB_RESUME to "must" (or "allow")
@@ -861,6 +860,36 @@ class MSEDist:
         else:
             raise NotImplementedError(self._agg)
         return -loss
+
+
+class CosineDist:
+    """A lightweight 'distribution' whose log_prob is cosine similarity.
+
+    Intended for already L2-normalized embeddings (e.g. MineCLIP `mc_e`), but
+    normalizes both inputs anyway for stability.
+    """
+
+    def __init__(self, mode, eps: float = 1e-8):
+        self._mode = mode
+        self._eps = eps
+
+    def _normalize(self, x):
+        flat = x.reshape(list(x.shape[:2]) + [-1])
+        denom = torch.linalg.norm(flat, dim=-1, keepdim=True).clamp_min(self._eps)
+        return (flat / denom).reshape(x.shape)
+
+    def mode(self):
+        return self._normalize(self._mode)
+
+    def mean(self):
+        return self.mode()
+
+    def log_prob(self, value):
+        assert self._mode.shape == value.shape, (self._mode.shape, value.shape)
+        a = self._normalize(self._mode).reshape(list(self._mode.shape[:2]) + [-1])
+        b = self._normalize(value).reshape(list(value.shape[:2]) + [-1])
+        cos = (a * b).sum(dim=-1)
+        return cos
 
 
 class SymlogDist:

@@ -1,0 +1,58 @@
+long_term_branch_weight: 1.0
+gaussian_reward_weight: 1.0
+gaussian_sigma_weight: 0.5
+
+# rollout
+is_random: true
+agent_checkpoint_dir: ""
+rollout_image_num: 2000
+
+unet_batch_size: 64
+results_dir: ./results
+name: test
+target_item: log
+steps: 1e6
+parallel: false
+envs: 1
+eval_episode_num: 3
+eval_every: 10000
+action_repeat: 1
+train_ratio: 16
+video_pred_log: true
+dyn_hidden: 1024
+dyn_deter: 4096
+units: 1024
+encoder:
+  mlp_keys: inventory|inventory_max|equipped|health|hunger|breath|obs_reward
+  cnn_keys: "^(image|heatmap)$"
+  cnn_depth: 96
+  mlp_layers: 5
+  mlp_units: 1024
+decoder:
+  mlp_keys: inventory|inventory_max|equipped|health|hunger|breath
+  cnn_keys: "^(image|heatmap)$"
+  cnn_depth: 96
+  mlp_layers: 5
+  mlp_units: 1024
+actor:
+  layers: 5
+  dist: onehot
+  std: none
+value:
+  layers: 5
+reward_head:
+  layers: 5
+intrinsic_head:
+  layers: 5
+jumping_steps_head:
+  layers: 5
+accumulated_reward_head:
+  layers: 5
+end_head:
+  layers: 5
+jump_head:
+  layers: 5
+imag_gradient: reinforce
+break_speed: 100.0
+time_limit: 36000
+

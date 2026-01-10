@@ -64,7 +64,7 @@ for TASK in "${TASKS[@]}"; do
   if [ "$RUN_TRAINING" = true ]; then
     echo "[4/5] Training agent..."
     python expr.py \
-        --configs minedojo "$MODE" \
+        --mode "$MODE" \
         --task "$FULL_TASK" \
         --steps "$STEPS" \
         --logdir "$LOGDIR"

@@ -1,0 +1,12 @@
+baseline_mode: true
+jump_prob: 0.0
+long_term_branch_weight: 0.0
+
+# Pixels-only DreamerV3 baseline (as in paper): no inventory, health, etc.
+encoder:
+  mlp_keys: "$^"
+  cnn_keys: "^image$"
+decoder:
+  mlp_keys: "$^"
+  cnn_keys: "^image$"
+

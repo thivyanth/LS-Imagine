@@ -1,7 +1,6 @@
 defaults:
 
   use_wandb: True
-  wandb_key: 05ce4790ac0a7095c30a3db2c4702f98a95bf10d
   # Optional natural-language prompt (e.g. LS-Imagine affordance prompt). Stored in W&B config if provided.
   prompt: ""
   logdir: null

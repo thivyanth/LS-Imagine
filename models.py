@@ -605,9 +605,13 @@ class WorldModel(nn.Module):
             embed[:6, :5], data["action"][:6, :5], data["is_first"][:6, :5]
         )
     
-        recon = self.heads["decoder"](self.dynamics.get_feat(states))["image"].mode()[
-            :6
-        ]
+        dec_post = self.heads["decoder"](self.dynamics.get_feat(states))
+        if "image" not in dec_post:
+            raise KeyError(
+                "video_pred requires decoder to predict 'image' but current config.decoder does not include it. "
+                "Set video_pred_log=False (recommended for VLM-only) or include image in decoder.cnn_keys."
+            )
+        recon = dec_post["image"].mode()[:6]
 
         reward_post = self.heads["reward"](self.dynamics.get_feat(states)).mode()[:6]
         init = {k: v[:, -1] for k, v in states.items()}
@@ -1044,12 +1048,16 @@ class ImagBehavior(nn.Module):
         for feat in feats:
             feat = feat.unsqueeze(0).unsqueeze(0)
 
-            image_tensor = self._world_model.heads["decoder"](feat)["image"].mode()
+            dec = self._world_model.heads["decoder"](feat)
+            # VLM-only configs may not include pixel/heatmap reconstruction.
+            if "image" not in dec or "heatmap" not in dec:
+                return
+            image_tensor = dec["image"].mode()
             image_tensor = image_tensor.squeeze(0).squeeze(0)
             image_tensor = torch.clamp(image_tensor, min=0.0, max=1.0) * 255.0
             image = tensor_to_image(image_tensor)
 
-            heatmap_tensor = self._world_model.heads["decoder"](feat)["heatmap"].mode()
+            heatmap_tensor = dec["heatmap"].mode()
             heatmap_tensor = heatmap_tensor.squeeze(0).squeeze(0)
             heatmap_tensor = torch.clamp(heatmap_tensor, min=0.0, max=1.0)
             heatmap = apply_colormap_to_heatmap(heatmap_tensor, cmap='jet', vmin=0, vmax=1)

@@ -57,7 +57,7 @@ def main():
         "--mode",
         type=str,
         default="dreamer_baseline",
-        choices=["ls_imagine", "dreamer_baseline", "mpf_lsd", "mpf_lsd_baseline"],
+        choices=["ls_imagine", "dreamer_baseline", "mpf_lsd", "mpf_lsd_baseline", "vlm_only_baseline"],
         help="Training mode (maps to a config section in configs.yaml).",
     )
     parser.add_argument("--tasks", nargs="+", default=TASKS, help="Tasks to run")
@@ -111,7 +111,7 @@ def main():
     eval_episodes = args.eval_episodes
 
     # Baseline dreamer should physically disable affordance steps
-    is_baseline = (MODE in ("dreamer_baseline", "mpf_lsd_baseline"))
+    is_baseline = (MODE in ("dreamer_baseline", "mpf_lsd_baseline", "vlm_only_baseline"))
     
     for task in args.tasks:
         prompt = PROMPTS.get(task, "minecraft task")
@@ -156,7 +156,7 @@ def main():
             print("[4/5] Training agent...")
             cmd = [
                 "xvfb-run", "-a", "python", "expr.py",
-                "--configs", "minedojo", MODE,
+                "--mode", MODE,
                 "--task", full_task,
                 "--prompt", prompt,
                 "--steps", str(steps_str),
@@ -185,7 +185,7 @@ def main():
                 eval_parallel = args.eval_parallel or args.parallel
                 cmd = [
                     "xvfb-run", "-a", "python", "test.py",
-                    "--configs", "minedojo", eval_mode,
+                    "--mode", eval_mode,
                     "--task", full_task,
                     "--prompt", prompt,
                     "--logdir", "./logdir",

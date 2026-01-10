@@ -7,6 +7,6 @@ fi
 
 export MINEDOJO_HEADLESS=1
 python expr.py \
-    --configs minedojo \
+    --mode "${MODE:-ls_imagine}" \
     --task minedojo_$1 \
     --logdir ./logdir
