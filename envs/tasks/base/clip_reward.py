@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from omegaconf import OmegaConf
 from mineclip import MineCLIP
 from abc import ABC, abstractstaticmethod
+import json
+import hashlib
 
 
 class ClipReward(ABC):
@@ -31,6 +33,9 @@ class ClipReward(ABC):
 
     def _load_mineclip(self, ckpt, config):
         import os
+        global _MINECLIP_SHARED_CACHE
+        if "_MINECLIP_SHARED_CACHE" not in globals():
+            _MINECLIP_SHARED_CACHE = {}
         
         # Auto-download checkpoint if not found
         if not os.path.exists(ckpt):
@@ -39,13 +44,28 @@ class ClipReward(ABC):
             self._download_checkpoint(ckpt)
         
         config = OmegaConf.create(config)
-        self.model = MineCLIP(**config).to(self.device)
+        # Share MineCLIP weights across env wrappers / training to avoid duplicate VRAM use.
+        # Key is based on ckpt path, device, and MineCLIP constructor config.
+        try:
+            cfg_dict = OmegaConf.to_container(config, resolve=True)
+        except Exception:
+            cfg_dict = dict(config)
+        key_str = json.dumps({"ckpt": ckpt, "device": str(self.device), "cfg": cfg_dict}, sort_keys=True, default=str)
+        cache_key = hashlib.sha1(key_str.encode("utf-8")).hexdigest()
+        if cache_key in _MINECLIP_SHARED_CACHE:
+            self.model, loaded_ckpt = _MINECLIP_SHARED_CACHE[cache_key]
+        else:
+            self.model = MineCLIP(**config).to(self.device)
+            loaded_ckpt = None
+            _MINECLIP_SHARED_CACHE[cache_key] = (self.model, loaded_ckpt)
         
-        if os.path.exists(ckpt):
+        if os.path.exists(ckpt) and loaded_ckpt != ckpt:
             self.model.load_ckpt(ckpt, strict=True)
+            _MINECLIP_SHARED_CACHE[cache_key] = (self.model, ckpt)
             print(f"✓ MineCLIP weights loaded from {ckpt}")
         else:
-            print(f"✗ Download failed! Model will use random weights.")
+            if not os.path.exists(ckpt):
+                print(f"✗ Download failed! Model will use random weights.")
             
         if self.resolution != (160, 256):  # Not ideal, but we need to resize the relative position embedding
             self.model.clip_model.vision_model._resolution = th.tensor([160, 256])  # This isn't updated from when mineclip resized it

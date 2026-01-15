@@ -167,7 +167,10 @@ def make_env(config, mode, id):
         kwargs=dict(
                 log_dir=log_dir,
                 target_item=config.target_item,
-                baseline_mode=getattr(config, 'baseline_mode', False)
+                baseline_mode=getattr(config, 'baseline_mode', False),
+                # Optional: store raw MineDojo 160x256 RGB frames in replay for VLM training-time embedding recompute.
+                store_vlm_rgb=getattr(config, "store_vlm_rgb", False),
+                vlm_rgb_key=getattr(config, "vlm_rgb_key", "vlm_rgb"),
             )
         env = minedojo.make_env(task, **kwargs)
         env = wrappers.OneHotAction(env)

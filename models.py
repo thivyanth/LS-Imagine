@@ -11,6 +11,10 @@ from torch import nn
 
 import networks
 import tools
+import torch.nn.functional as F
+
+# Training-time MineCLIP embedding recompute + LoRA
+from vlm_lora import inject_lora, freeze_module_params
 
 
 to_np = lambda x: x.detach().cpu().numpy()
@@ -49,6 +53,43 @@ class WorldModel(nn.Module):
         shapes = {k: tuple(v.shape) for k, v in obs_space.spaces.items()} # 'image': (64, 64, 3)
         self.encoder = networks.MultiEncoder(shapes, **config.encoder)
         self.embed_size = self.encoder.outdim
+
+        # --- VLM-only baseline LoRA: recompute MineCLIP embedding inside training forward pass ---
+        self._vlm_recompute_mc_e = bool(getattr(config, "vlm_recompute_mc_e", False))
+        self._vlm_rgb_key = str(getattr(config, "vlm_rgb_key", "vlm_rgb"))
+        self._vlm_train_stride = int(getattr(config, "vlm_train_stride", 1))
+        self._vlm_grad_checkpoint = bool(getattr(config, "vlm_grad_checkpoint", False))
+        self._vlm_precision = str(getattr(config, "vlm_precision", "fp32")).lower()
+        self._vlm_lora_enable = bool(getattr(config, "vlm_lora_enable", False))
+        self._vlm_text_cache = {}
+        self._vlm = None
+
+        if self._vlm_recompute_mc_e:
+            # Reuse MineCLIP weights from env wrapper cache to avoid duplicating VRAM.
+            from envs.tasks.minedojo.wrappers import MinedojoClipReward
+
+            tmp = MinedojoClipReward(device=str(config.device))
+            self._vlm = tmp.model
+            # Freeze all base MineCLIP weights.
+            freeze_module_params(self._vlm, trainable=False)
+
+            # Optionally inject LoRA.
+            if self._vlm_lora_enable:
+                r = int(getattr(config, "lora_r", 8))
+                alpha = float(getattr(config, "lora_alpha", 16))
+                dropout = float(getattr(config, "lora_dropout", 0.0))
+                targets = list(getattr(config, "lora_target_modules", []) or [])
+                replaced = inject_lora(
+                    self._vlm,
+                    r=r,
+                    alpha=alpha,
+                    dropout=dropout,
+                    target_patterns=targets,
+                )
+                print(f"[VLM] LoRA enabled: replaced {replaced} modules")
+
+            if self._vlm_grad_checkpoint:
+                self._enable_mineclip_checkpointing()
 
         # MPF-LSD: optional MineCLIP fusion for RSSM posterior embed.
         self._mc_fuse = bool(getattr(config, "mc_fuse", False))
@@ -195,7 +236,7 @@ class WorldModel(nn.Module):
 
         self._model_opt = tools.Optimizer(
             "model",
-            self.parameters(),
+            [p for p in self.parameters() if p.requires_grad],
             config.model_lr,
             config.opt_eps,
             config.grad_clip,
@@ -205,7 +246,7 @@ class WorldModel(nn.Module):
         )
 
         print(
-            f"Optimizer model_opt has {sum(param.numel() for param in self.parameters())} variables."
+            f"Optimizer model_opt has {sum(param.numel() for param in self.parameters() if param.requires_grad)} trainable variables."
         )
 
         # other losses are scaled by 1.0.
@@ -260,6 +301,8 @@ class WorldModel(nn.Module):
         
         with tools.RequiresGrad(self):
             with torch.cuda.amp.autocast(self._use_amp):
+                if self._vlm_recompute_mc_e:
+                    data["mc_e"] = self._compute_mc_e_from_replay(data)
                 embed = self.encode(data, zoomed=False)
                 post, prior = self.dynamics.observe(
                     embed, data["action"], data["is_first"]
@@ -304,7 +347,7 @@ class WorldModel(nn.Module):
                 
                 model_loss = sum(scaled.values()) + kl_loss
         
-            metrics = self._model_opt(torch.mean(model_loss), self.parameters())
+            metrics = self._model_opt(torch.mean(model_loss), [p for p in self.parameters() if p.requires_grad])
         
         metrics.update({f"{name}_loss": to_np(torch.mean(loss)) for name, loss in losses.items()})
         metrics["kl_free"] = kl_free
@@ -492,7 +535,7 @@ class WorldModel(nn.Module):
                     
                     model_loss = sum(scaled.values()) + kl_loss
 
-            metrics = self._model_opt(torch.mean(model_loss), self.parameters())
+            metrics = self._model_opt(torch.mean(model_loss), [p for p in self.parameters() if p.requires_grad])
 
         metrics.update({f"{name}_loss": to_np(torch.mean(loss)) for name, loss in losses.items()})
         if zoomed_num > 0:
@@ -594,7 +637,18 @@ class WorldModel(nn.Module):
         # Keep MineCLIP embeddings in float32 on device (replay may store float16).
         if "mc_e" in obs:
             obs["mc_e"] = torch.as_tensor(obs["mc_e"], dtype=torch.float32)
-        obs = {k: torch.Tensor(v).to(self._config.device) if k != "mc_e" else obs["mc_e"].to(self._config.device) for k, v in obs.items()}
+        # Preserve raw VLM RGB frames (uint8) without implicit float conversion.
+        rgb_key = str(getattr(self._config, "vlm_rgb_key", "vlm_rgb"))
+        out = {}
+        for k, v in obs.items():
+            if k == "mc_e":
+                out[k] = obs["mc_e"].to(self._config.device)
+            elif k == rgb_key:
+                # Keep on CPU as uint8; moved to device only during VLM compute.
+                out[k] = torch.as_tensor(v, dtype=torch.uint8)
+            else:
+                out[k] = torch.Tensor(v).to(self._config.device)
+        obs = out
         return obs
 
     def video_pred(self, data):
@@ -624,6 +678,112 @@ class WorldModel(nn.Module):
         error = (model - truth + 1.0) / 2.0
 
         return torch.cat([truth, model, error], 2)
+
+    def _enable_mineclip_checkpointing(self):
+        """
+        Enable activation checkpointing over MineCLIP vision transformer blocks.
+        This reduces activation memory when training LoRA through the VLM.
+        """
+        import torch.utils.checkpoint as ckpt
+
+        if self._vlm is None:
+            return
+        vit = getattr(getattr(self._vlm, "clip_model", None), "vision_model", None)
+        if vit is None or not hasattr(vit, "blocks"):
+            return
+
+        blocks = vit.blocks
+        if getattr(blocks, "_is_checkpointed", False):
+            return
+
+        class _CheckpointedSeq(nn.Module):
+            def __init__(self, seq: nn.Sequential):
+                super().__init__()
+                self.seq = seq
+                self._is_checkpointed = True
+
+            def forward(self, x):
+                if not self.training:
+                    return self.seq(x)
+                for m in self.seq:
+                    x = ckpt.checkpoint(m, x, use_reentrant=False)
+                return x
+
+        vit.blocks = _CheckpointedSeq(blocks)
+        print("[VLM] Enabled activation checkpointing for vision transformer blocks")
+
+    def _vlm_autocast(self):
+        if self._vlm_precision == "fp16":
+            return torch.cuda.amp.autocast(enabled=True, dtype=torch.float16)
+        if self._vlm_precision == "bf16":
+            return torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16)
+        return torch.cuda.amp.autocast(enabled=False)
+
+    def _get_text_feat(self, prompt: str) -> torch.Tensor:
+        if prompt in self._vlm_text_cache:
+            return self._vlm_text_cache[prompt]
+        with torch.no_grad():
+            # MineCLIP/CLIP can tokenize internally from list[str]
+            t = self._vlm.encode_text([prompt]).to(self._config.device)  # [1, 512]
+        self._vlm_text_cache[prompt] = t
+        return t
+
+    def _compute_mc_e_from_replay(self, data: dict) -> torch.Tensor:
+        """
+        Build MineCLIP spec-matching 16-frame clips from stored replay frames and compute:
+          mc_e = normalize( normalize(v) ⊙ normalize(u) )
+
+        Expected:
+          data[vlm_rgb_key]: torch/np uint8 [B, T, 3, 160, 256]
+        Returns:
+          mc_e: torch float32 [B, T, 512] on config.device
+        """
+        if self._vlm is None:
+            raise RuntimeError("vlm_recompute_mc_e enabled but MineCLIP model is not initialized")
+
+        rgb_key = self._vlm_rgb_key
+        if rgb_key not in data:
+            raise KeyError(f"Missing replay key '{rgb_key}' required for vlm_recompute_mc_e")
+
+        frames = data[rgb_key]
+        if not torch.is_tensor(frames):
+            frames = torch.as_tensor(frames, dtype=torch.uint8)
+        if frames.dtype != torch.uint8:
+            frames = frames.to(dtype=torch.uint8)
+
+        B, T = frames.shape[0], frames.shape[1]
+        device = self._config.device
+
+        # Left pad with earliest frame to construct t-15..t windows.
+        pad = frames[:, :1].repeat(1, 15, 1, 1, 1)           # [B,15,3,H,W]
+        padded = torch.cat([pad, frames], dim=1)             # [B,T+15,3,H,W]
+        windows = padded.unfold(dimension=1, size=16, step=1)  # [B,T,16,3,H,W]
+        windows = windows.contiguous().view(B * T, 16, *frames.shape[2:])  # [B*T,16,3,H,W]
+
+        stride = max(1, int(self._vlm_train_stride))
+        prompt = str(getattr(self._config, "prompt", "") or "") or "minecraft task"
+        u = self._get_text_feat(prompt).to(device)[0]  # [512]
+
+        # Flatten order is (b,t) with t changing fastest -> timestep index repeats for each batch element.
+        ts = torch.arange(T, device=device).repeat_interleave(B)  # [B*T]
+        grad_mask = (ts % stride == 0)
+
+        out = torch.empty((B * T, 512), device=device, dtype=torch.float32)
+        vids = windows.to(device, non_blocking=True)
+        if grad_mask.any():
+            with self._vlm_autocast():
+                v = self._vlm.encode_video(vids[grad_mask])  # [N,512]
+            out[grad_mask] = v.float()
+        if (~grad_mask).any():
+            with torch.no_grad():
+                with self._vlm_autocast():
+                    v = self._vlm.encode_video(vids[~grad_mask])
+            out[~grad_mask] = v.float()
+
+        v_n = F.normalize(out, dim=-1)
+        u_n = F.normalize(u.float(), dim=-1)
+        mc_e = F.normalize(v_n * u_n, dim=-1).view(B, T, 512)
+        return mc_e
 
 
 class ImagBehavior(nn.Module):

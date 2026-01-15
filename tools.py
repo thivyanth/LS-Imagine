@@ -73,7 +73,11 @@ class RequiresGrad:
         self._model = model
 
     def __enter__(self):
-        self._model.requires_grad_(requires_grad=True)
+        # Enable gradients only for parameters marked trainable.
+        # Default behavior for existing code (no marks) is "train everything".
+        for p in self._model.parameters():
+            trainable = getattr(p, "_trainable", True)
+            p.requires_grad_(trainable)
 
     def __exit__(self, *args):
         self._model.requires_grad_(requires_grad=False)

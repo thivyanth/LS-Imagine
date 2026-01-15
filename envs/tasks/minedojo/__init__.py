@@ -57,6 +57,8 @@ def _add_wrappers(
     fast_reset: int = None,
     log_dir: str = None,
     freeze_equipped: bool = True,
+    store_vlm_rgb: bool = False,
+    vlm_rgb_key: str = "vlm_rgb",
     **kwargs
 ):
     
@@ -91,7 +93,7 @@ def _add_wrappers(
     else:
         # Baseline mode: use minimal observation wrapper (no LS fields)
         from envs.tasks.base import BaselineObsWrapper
-        env = BaselineObsWrapper(env)
+        env = BaselineObsWrapper(env, store_vlm_rgb=store_vlm_rgb, vlm_rgb_key=vlm_rgb_key)
 
     # If we don't care about start position, use fast reset to speed training and prevent memory leaks
     if fast_reset is not None:

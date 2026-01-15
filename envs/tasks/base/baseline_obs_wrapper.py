@@ -55,9 +55,20 @@ class BaselineObsWrapper(Wrapper, ABC):
     Returns only standard observation fields without LS-Imagine specific fields.
     No heatmap, no jump, no zoomed, no intrinsic, no score.
     """
-    def __init__(self, env, repeat=1, sticky_attack=0, sticky_jump=10, pitch_limit=(-70, 70)):
+    def __init__(
+        self,
+        env,
+        repeat=1,
+        sticky_attack=0,
+        sticky_jump=10,
+        pitch_limit=(-70, 70),
+        store_vlm_rgb: bool = False,
+        vlm_rgb_key: str = "vlm_rgb",
+    ):
         super().__init__(env)
         self.wrapper_name = "BaselineObsWrapper"
+        self._store_vlm_rgb = bool(store_vlm_rgb)
+        self._vlm_rgb_key = str(vlm_rgb_key)
 
         self._noop_action = NOOP_ACTION
         actions = self._insert_defaults(BASIC_ACTIONS)
@@ -65,23 +76,25 @@ class BaselineObsWrapper(Wrapper, ABC):
         self._action_values = tuple(actions.values())
 
         # Standard DreamerV3 observation space - NO LS fields
-        self.observation_space = spaces.Dict(
-            {
-                'image': spaces.Box(low=0, high=255, shape=(64, 64, 3), dtype=np.uint8),
-                # MPF-LSD: frozen MineCLIP text-conditioned embedding stored in replay.
-                'mc_e': spaces.Box(-np.inf, np.inf, (512,), dtype=np.float32),
-                'inventory': spaces.Box(-np.inf, np.inf, (41,), dtype=np.float32),
-                'inventory_max': spaces.Box(-np.inf, np.inf, (41,), dtype=np.float32),
-                'equipped': spaces.Box(-np.inf, np.inf, (8,), dtype=np.float32),
-                'health': spaces.Box(-np.inf, np.inf, (1,), dtype=np.float32),
-                'hunger': spaces.Box(-np.inf, np.inf, (1,), dtype=np.float32),
-                'breath': spaces.Box(-np.inf, np.inf, (1,), dtype=np.float32),
-                'obs_reward': spaces.Box(-np.inf, np.inf, (1,), dtype=np.float32),
-                'is_first': spaces.Box(-np.inf, np.inf, (1,), dtype=np.uint8),
-                'is_last': spaces.Box(-np.inf, np.inf, (1,), dtype=np.uint8),
-                'is_terminal': spaces.Box(-np.inf, np.inf, (1,), dtype=np.uint8),
-            }
-        )
+        obs_spaces = {
+            'image': spaces.Box(low=0, high=255, shape=(64, 64, 3), dtype=np.uint8),
+            # MPF-LSD: frozen MineCLIP text-conditioned embedding stored in replay.
+            'mc_e': spaces.Box(-np.inf, np.inf, (512,), dtype=np.float32),
+            'inventory': spaces.Box(-np.inf, np.inf, (41,), dtype=np.float32),
+            'inventory_max': spaces.Box(-np.inf, np.inf, (41,), dtype=np.float32),
+            'equipped': spaces.Box(-np.inf, np.inf, (8,), dtype=np.float32),
+            'health': spaces.Box(-np.inf, np.inf, (1,), dtype=np.float32),
+            'hunger': spaces.Box(-np.inf, np.inf, (1,), dtype=np.float32),
+            'breath': spaces.Box(-np.inf, np.inf, (1,), dtype=np.float32),
+            'obs_reward': spaces.Box(-np.inf, np.inf, (1,), dtype=np.float32),
+            'is_first': spaces.Box(-np.inf, np.inf, (1,), dtype=np.uint8),
+            'is_last': spaces.Box(-np.inf, np.inf, (1,), dtype=np.uint8),
+            'is_terminal': spaces.Box(-np.inf, np.inf, (1,), dtype=np.uint8),
+        }
+        if self._store_vlm_rgb:
+            # Raw MineDojo RGB (C,H,W) at the native 160x256 used by MineCLIP.
+            obs_spaces[self._vlm_rgb_key] = spaces.Box(low=0, high=255, shape=(3, 160, 256), dtype=np.uint8)
+        self.observation_space = spaces.Dict(obs_spaces)
 
         self.action_space = spaces.discrete.Discrete(len(BASIC_ACTIONS))
         self.action_space.discrete = True
@@ -171,6 +184,9 @@ class BaselineObsWrapper(Wrapper, ABC):
             'is_last': obs['is_last'],
             'is_terminal': obs['is_terminal'],
         }
+        if self._store_vlm_rgb:
+            # Keep raw CHW uint8 for training-time MineCLIP embedding recomputation.
+            processed_obs[self._vlm_rgb_key] = np.array(obs.get("rgb"), dtype=np.uint8)
 
         # Validate all fields
         for key, value in processed_obs.items():

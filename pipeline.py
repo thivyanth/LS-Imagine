@@ -57,7 +57,7 @@ def main():
         "--mode",
         type=str,
         default="dreamer_baseline",
-        choices=["ls_imagine", "dreamer_baseline", "mpf_lsd", "mpf_lsd_baseline", "vlm_only_baseline"],
+        choices=["ls_imagine", "dreamer_baseline", "mpf_lsd", "mpf_lsd_baseline", "vlm_only_baseline", "vlm_only_baseline_lora"],
         help="Training mode (maps to a config section in configs.yaml).",
     )
     parser.add_argument("--tasks", nargs="+", default=TASKS, help="Tasks to run")
@@ -111,7 +111,7 @@ def main():
     eval_episodes = args.eval_episodes
 
     # Baseline dreamer should physically disable affordance steps
-    is_baseline = (MODE in ("dreamer_baseline", "mpf_lsd_baseline", "vlm_only_baseline"))
+    is_baseline = (MODE in ("dreamer_baseline", "mpf_lsd_baseline", "vlm_only_baseline", "vlm_only_baseline_lora"))
     
     for task in args.tasks:
         prompt = PROMPTS.get(task, "minecraft task")

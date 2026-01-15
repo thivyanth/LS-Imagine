@@ -56,6 +56,7 @@ def resolve_mode_files(mode: str, configs_dir: pathlib.Path) -> list[pathlib.Pat
         "mpf_lsd": "mpf_lsd.yaml",
         "mpf_lsd_baseline": "mpf_lsd_baseline.yaml",
         "vlm_only_baseline": "vlm_only_baseline.yaml",
+        "vlm_only_baseline_lora": "vlm_only_baseline_lora.yaml",
     }
     fname = mode_map.get(mode, f"{mode}.yaml")
     mode_path = mode_dir / fname

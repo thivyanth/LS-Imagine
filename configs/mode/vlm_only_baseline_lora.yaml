@@ -1,0 +1,51 @@
+baseline_mode: true
+jump_prob: 0.0
+long_term_branch_weight: 0.0
+
+# VLM-only: do not log pixel video preds (decoder predicts embeddings)
+video_pred_log: false
+
+# No MPF fusion for this mode (we directly use the VLM embedding as encoder input)
+mc_fuse: false
+
+# --- Replay / training-time VLM path ---
+# Store raw 160x256 RGB frames in replay for training-time MineCLIP embedding recompute.
+store_vlm_rgb: true
+vlm_rgb_key: "vlm_rgb"
+# Recompute mc_e inside the training forward pass so RSSM/world-model losses backprop to LoRA params.
+vlm_recompute_mc_e: true
+
+# --- Memory/throughput knobs (activation memory dominates) ---
+vlm_grad_checkpoint: true
+vlm_precision: "fp16"        # {"fp16","bf16","fp32"}
+vlm_train_stride: 2          # compute MineCLIP embeddings with grad every k timesteps; others are no_grad
+
+# --- LoRA knobs ---
+vlm_lora_enable: true
+lora_r: 8
+lora_alpha: 16
+lora_dropout: 0.0
+# Regex/patterns over module names. Defaults target common CLIP naming in this repo:
+# - MLP: c_fc, c_proj
+# - Attention: MultiheadAttention (combined qkv) + out_proj
+lora_target_modules:
+  - "mlp\\.c_fc$"
+  - "mlp\\.c_proj$"
+  - "attn$"
+
+# Encoder/decoder operate on VLM embedding only (mc_e).
+encoder:
+  mlp_keys: "^mc_e$"
+  cnn_keys: "$^"
+  mlp_layers: 5
+  mlp_units: 1024
+  symlog_inputs: false
+
+decoder:
+  mlp_keys: "^mc_e$"
+  cnn_keys: "$^"
+  mlp_layers: 5
+  mlp_units: 1024
+  vector_dist: cosine
+  outscale: 1.0
+

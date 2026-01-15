@@ -134,6 +134,22 @@ unimix_ratio: 0.01
 initial: learned
 baseline_mode: false
 
+# --- VLM-only baseline LoRA (training-time MineCLIP embedding recompute) ---
+# NOTE: env-side MineCLIP reward shaping remains no-grad and wrapper-based; these flags only affect
+# whether training recomputes embeddings from stored raw frames.
+store_vlm_rgb: false
+vlm_rgb_key: vlm_rgb
+vlm_recompute_mc_e: false
+vlm_train_stride: 1           # compute VLM embedding with grad every k timesteps
+vlm_grad_checkpoint: false     # activation checkpointing inside MineCLIP vision transformer blocks
+vlm_precision: fp32            # {fp32, fp16, bf16}
+
+vlm_lora_enable: false
+lora_r: 8
+lora_alpha: 16
+lora_dropout: 0.0
+lora_target_modules: []
+
 # MPF-LSD (MineCLIP-Pixel Fusion Long-Short Dreamer): optional posterior fusion.
 mc_fuse: false
 mc_fuse_zoomed: true
