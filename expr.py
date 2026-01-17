@@ -404,6 +404,27 @@ def main(config): # config is namespace
         }
         
         torch.save(items_to_save, logdir / "latest.pt")
+        
+        if config.eval_episode_num > 0:
+            print("Start evaluation.")
+            eval_policy = functools.partial(agent, training=False) 
+            tools.simulate(
+                eval_policy,
+                eval_envs,
+                eval_eps,
+                config.evaldir,
+                logger,
+                step_calculator,
+                config.episode_max_steps,
+                config.discount,
+                is_eval=True,
+                episodes=config.eval_episode_num,
+                is_training=False,
+                baseline_mode=getattr(config, 'baseline_mode', False),
+            )
+            if config.video_pred_log:
+                video_pred = agent._wm.video_pred(next(eval_dataset))
+                logger.video("eval_openl", to_np(video_pred))
 
     for env in train_envs + eval_envs:
         try:
